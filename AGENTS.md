@@ -69,6 +69,12 @@ Use snake_case consistently for project-defined Python and C++ modules,
 functions, variables, files, targets, and similar identifiers unless an
 external API requires another convention.
 
+Put C++ template declarations on their own line immediately above the
+function, class, or variable they declare.
+
+Do not mention PR or roadmap numbers in source comments or docstrings. Explain
+the lasting scientific or architectural reason instead.
+
 ### Python
 
 Python is the user-facing orchestration and study-definition layer.
