@@ -21,6 +21,10 @@ Core scientific values are implemented in C++20 and exposed as immutable Python 
 populations store each numerical field in its own contiguous array so later compiled kernels can
 process them as structure-of-arrays data without changing the public model.
 
+Experiment identity is derived in the Python orchestration layer from schema-tagged canonical JSON.
+Floating-point values use exact hexadecimal text, and SHA-256 provides experiment and study
+identities. Provenance metadata is explicit and contains no implicit timestamps or process state.
+
 Study-specific code belongs under `studies/`; the core library must not depend on the current IAC
 study. Future backends may include Cascade, heyoka, SGP4, JAX, and CUDA, but this foundation neither
 implements nor designs APIs for them.
