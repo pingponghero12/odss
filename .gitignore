@@ -2,7 +2,6 @@
 __pycache__/
 *.py[codz]
 *$py.class
-*.md
 
 # C extensions
 *.so
@@ -117,6 +116,18 @@ ipython_config.py
 # pdm.toml
 .pdm-python
 .pdm-build/
+
+# CMake build trees and generated compilation databases
+build-*/
+compile_commands.json
+
+# Virtual environments
+.venv/
+.direnv/
+
+# Local planning and scientific background material
+CONTEXT.md
+docs/pr/
 
 # pixi
 #   Similar to Pipfile.lock, it is generally recommended to include pixi.lock in version control.

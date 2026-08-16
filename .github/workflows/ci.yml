@@ -1,0 +1,99 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  build-and-test:
+    name: ${{ matrix.compiler }} / Python ${{ matrix.python }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - compiler: GCC
+            cc: gcc
+            cxx: g++
+            python: "3.10"
+          - compiler: GCC
+            cc: gcc
+            cxx: g++
+            python: "3.11"
+          - compiler: Clang
+            cc: clang
+            cxx: clang++
+            python: "3.12"
+    env:
+      CC: ${{ matrix.cc }}
+      CXX: ${{ matrix.cxx }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+          cache: pip
+      - name: Install build and test tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes libgtest-dev
+          python -m pip install --upgrade pip
+          python -m pip install . pytest
+      - name: Configure C++
+        run: cmake --preset release -DODSS_BUILD_PYTHON=OFF
+      - name: Build C++
+        run: cmake --build --preset release
+      - name: Test C++
+        run: ctest --preset release
+      - name: Test Python
+        run: python -m pytest
+
+  sanitizers:
+    name: ${{ matrix.preset }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        preset: [asan, ubsan]
+    env:
+      CC: clang
+      CXX: clang++
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install C++ test dependencies
+        run: sudo apt-get update && sudo apt-get install --yes libgtest-dev
+      - name: Configure
+        run: cmake --preset ${{ matrix.preset }} -DODSS_BUILD_PYTHON=OFF
+      - name: Build
+        run: cmake --build --preset ${{ matrix.preset }}
+      - name: Test
+        run: ctest --preset ${{ matrix.preset }}
+
+  quality:
+    name: Quality
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - name: Install quality tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes clang-format clang-tidy libgtest-dev pybind11-dev
+          python -m pip install ruff
+      - name: Ruff
+        run: ruff check .
+      - name: clang-format
+        run: clang-format --dry-run --Werror cpp/include/odss/version.hpp cpp/src/version.cpp bindings/python/module.cpp tests/cpp/test_version.cpp
+      - name: Configure clang-tidy
+        env:
+          CC: clang
+          CXX: clang++
+        run: cmake --preset debug -DCMAKE_CXX_CLANG_TIDY=clang-tidy
+      - name: clang-tidy
+        run: cmake --build --preset debug
