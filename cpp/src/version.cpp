@@ -1,0 +1,7 @@
+#include "odss/version.hpp"
+
+namespace odss {
+
+std::string_view version() noexcept { return "0.1.0"; }
+
+} // namespace odss
