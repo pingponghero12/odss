@@ -34,7 +34,7 @@ elseif(NOT ODSS_SANITIZER STREQUAL "none")
   message(FATAL_ERROR "ODSS_SANITIZER must be none, address, or undefined")
 endif()
 
-add_library(odss_core STATIC cpp/src/version.cpp)
+add_library(odss_core STATIC cpp/src/data_model.cpp cpp/src/version.cpp)
 add_library(odss::core ALIAS odss_core)
 set_target_properties(odss_core PROPERTIES POSITION_INDEPENDENT_CODE ON)
 target_compile_features(odss_core PUBLIC cxx_std_20)
@@ -69,4 +69,12 @@ if(BUILD_TESTING)
   )
   include(GoogleTest)
   gtest_discover_tests(test_version)
+
+  add_executable(test_data_model tests/cpp/test_data_model.cpp)
+  target_compile_features(test_data_model PRIVATE cxx_std_20)
+  target_link_libraries(
+    test_data_model
+    PRIVATE odss::core odss::warnings GTest::gtest_main
+  )
+  gtest_discover_tests(test_data_model)
 endif()

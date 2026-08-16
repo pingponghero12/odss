@@ -128,6 +128,7 @@ compile_commands.json
 # Local planning and scientific background material
 CONTEXT.md
 docs/pr/
+ROADMAP.md
 
 # pixi
 #   Similar to Pipfile.lock, it is generally recommended to include pixi.lock in version control.
