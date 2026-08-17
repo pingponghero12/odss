@@ -2,8 +2,10 @@
 #include <pybind11/stl.h>
 
 #include <cstddef>
+#include <string>
 
 #include "odss/data_model.hpp"
+#include "odss/random.hpp"
 #include "odss/version.hpp"
 
 namespace py = pybind11;
@@ -32,6 +34,26 @@ void bind_equality(py::class_<Type>& type) {
 PYBIND11_MODULE(_core, module) {
   module.doc() = "Compiled odss core";
   module.def("version", &odss::version, "Return the library version.");
+  module.attr("RNG_ALGORITHM") = std::string(odss::rng_algorithm);
+
+  auto random_key =
+      py::class_<odss::RandomKey>(module, "RandomKey",
+                                  "Immutable coordinates identifying one deterministic stream.")
+          .def(
+              py::init<std::uint64_t, std::uint64_t, std::uint64_t, std::uint64_t, std::uint64_t>(),
+              py::arg("master_seed"), py::arg("scenario_id"), py::arg("run_id"),
+              py::arg("object_id"), py::arg("stream_id"))
+          .def_property_readonly("master_seed", &odss::RandomKey::master_seed)
+          .def_property_readonly("scenario_id", &odss::RandomKey::scenario_id)
+          .def_property_readonly("run_id", &odss::RandomKey::run_id)
+          .def_property_readonly("object_id", &odss::RandomKey::object_id)
+          .def_property_readonly("stream_id", &odss::RandomKey::stream_id);
+  bind_equality(random_key);
+
+  module.def("random_u64", &odss::random_u64, py::arg("key"), py::arg("draw_index"),
+             "Return a schedule-independent random 64-bit value at a draw index.");
+  module.def("uniform_01", &odss::uniform_01, py::arg("key"), py::arg("draw_index"),
+             "Return a schedule-independent uniform value in [0, 1).");
 
   auto epoch = py::class_<odss::Epoch>(
                    module, "Epoch",

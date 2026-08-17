@@ -43,3 +43,22 @@ ctest --preset debug
 
 Direct CMake builds require development packages for pybind11 and GoogleTest. The `release`,
 `asan`, and `ubsan` presets are available in the same way.
+
+## Deterministic random values
+
+Random values are addressed explicitly and can be requested in any order:
+
+```python
+key = odss.named_random_key(
+    master_seed=2026,
+    scenario_id=0,
+    run_id=4,
+    object_id=12,
+    stream_name="fragment_mass",
+)
+sample = odss.uniform_01(key, draw_index=7)
+```
+
+The same address always produces the same value, independent of thread scheduling. A
+`RunManifest` records the master seed, scenario ID, run ID, and RNG algorithm needed to identify
+the run's stochastic inputs.

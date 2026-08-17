@@ -9,6 +9,7 @@ from collections.abc import Sequence
 from dataclasses import dataclass
 
 from ._core import ExperimentSpec, ParticlePopulation, version
+from .rng import RNG_ALGORITHM, _require_uint64
 
 _SHA256_HEX_LENGTH = 64
 _HEX_DIGITS = frozenset(string.hexdigits)
@@ -150,11 +151,19 @@ class RunManifest:
     """Minimal immutable identity and provenance record for a run."""
 
     experiment_hash: str
+    master_seed: int
+    scenario_id: int
+    run_id: int
+    rng_algorithm: str = RNG_ALGORITHM
     study_hash: str | None = None
     input_assets: tuple[InputAssetMetadata, ...] = ()
     software: tuple[SoftwareMetadata, ...] = ()
 
     def __post_init__(self) -> None:
+        _require_uint64(self.master_seed, "master_seed")
+        _require_uint64(self.scenario_id, "scenario_id")
+        _require_uint64(self.run_id, "run_id")
+        _require_text(self.rng_algorithm, "rng_algorithm")
         object.__setattr__(
             self,
             "experiment_hash",
@@ -193,7 +202,11 @@ def canonical_manifest(manifest: RunManifest) -> str:
             }
             for asset in assets
         ],
-        "schema": "odss.run_manifest.v1",
+        "master_seed": manifest.master_seed,
+        "rng_algorithm": manifest.rng_algorithm,
+        "run_id": manifest.run_id,
+        "scenario_id": manifest.scenario_id,
+        "schema": "odss.run_manifest.v2",
         "software": [{"name": item.name, "version": item.version} for item in software],
         "study_hash": manifest.study_hash,
     }
