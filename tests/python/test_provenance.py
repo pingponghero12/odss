@@ -118,12 +118,18 @@ def test_run_manifest_is_immutable_and_canonical() -> None:
     dependency = odss.SoftwareMetadata("dependency", "2.0")
     manifest = odss.RunManifest(
         experiment_hash=experiment_id.upper(),
+        master_seed=123456,
+        scenario_id=7,
+        run_id=9,
         study_hash=study_id.upper(),
         input_assets=[second_asset, first_asset],
         software=[odss_metadata, dependency],
     )
     reordered = odss.RunManifest(
         experiment_hash=experiment_id,
+        master_seed=123456,
+        scenario_id=7,
+        run_id=9,
         study_hash=study_id,
         input_assets=(first_asset, second_asset),
         software=(dependency, odss_metadata),
@@ -131,10 +137,17 @@ def test_run_manifest_is_immutable_and_canonical() -> None:
 
     assert manifest.experiment_hash == experiment_id
     assert manifest.study_hash == study_id
+    assert manifest.master_seed == 123456
+    assert manifest.scenario_id == 7
+    assert manifest.run_id == 9
+    assert manifest.rng_algorithm == odss.RNG_ALGORITHM
     assert isinstance(manifest.input_assets, tuple)
     assert isinstance(manifest.software, tuple)
-    assert odss.canonical_manifest(manifest) == odss.canonical_manifest(reordered)
-    assert odss.canonical_manifest(manifest).startswith('{"experiment_hash":')
+    canonical = odss.canonical_manifest(manifest)
+    assert canonical == odss.canonical_manifest(reordered)
+    assert canonical.startswith('{"experiment_hash":')
+    assert '"master_seed":123456' in canonical
+    assert '"rng_algorithm":"philox4x64-10-v1"' in canonical
     with pytest.raises(FrozenInstanceError):
         manifest.study_hash = None
 
@@ -143,8 +156,33 @@ def test_run_manifest_rejects_invalid_provenance() -> None:
     experiment_id = odss.experiment_hash(experiment())
 
     with pytest.raises(ValueError):
-        odss.RunManifest(experiment_hash="invalid")
+        odss.RunManifest(experiment_hash="invalid", master_seed=1, scenario_id=2, run_id=3)
     with pytest.raises(TypeError):
-        odss.RunManifest(experiment_hash=experiment_id, input_assets=("invalid",))
+        odss.RunManifest(
+            experiment_hash=experiment_id,
+            master_seed=1,
+            scenario_id=2,
+            run_id=3,
+            input_assets=("invalid",),
+        )
     with pytest.raises(TypeError):
-        odss.RunManifest(experiment_hash=experiment_id, software=("invalid",))
+        odss.RunManifest(
+            experiment_hash=experiment_id,
+            master_seed=1,
+            scenario_id=2,
+            run_id=3,
+            software=("invalid",),
+        )
+    for field_name in ("master_seed", "scenario_id", "run_id"):
+        values = {"master_seed": 1, "scenario_id": 2, "run_id": 3}
+        values[field_name] = -1
+        with pytest.raises(ValueError):
+            odss.RunManifest(experiment_hash=experiment_id, **values)
+    with pytest.raises(ValueError):
+        odss.RunManifest(
+            experiment_hash=experiment_id,
+            master_seed=1,
+            scenario_id=2,
+            run_id=3,
+            rng_algorithm="",
+        )

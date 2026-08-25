@@ -25,6 +25,12 @@ Experiment identity is derived in the Python orchestration layer from schema-tag
 Floating-point values use exact hexadecimal text, and SHA-256 provides experiment and study
 identities. Provenance metadata is explicit and contains no implicit timestamps or process state.
 
+Deterministic random values use a stateless Philox4x64-10 counter generator. The counter contains
+the scenario, run, object, and draw-block IDs; the key contains the master seed and stream ID.
+Python stream names are converted to stable 64-bit IDs with domain-separated SHA-256. This makes
+random access independent of execution order and thread scheduling. Run manifests record the
+run-level RNG identity but not individual object, stream, or draw coordinates.
+
 Study-specific code belongs under `studies/`; the core library must not depend on the current IAC
 study. Future backends may include Cascade, heyoka, SGP4, JAX, and CUDA, but this foundation neither
 implements nor designs APIs for them.

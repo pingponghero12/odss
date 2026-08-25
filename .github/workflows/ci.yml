@@ -88,7 +88,7 @@ jobs:
       - name: Ruff
         run: ruff check .
       - name: clang-format
-        run: clang-format --dry-run --Werror cpp/include/odss/version.hpp cpp/src/version.cpp bindings/python/module.cpp tests/cpp/test_version.cpp
+        run: clang-format --dry-run --Werror cpp/include/odss/random.hpp cpp/include/odss/version.hpp cpp/src/random.cpp cpp/src/version.cpp bindings/python/module.cpp tests/cpp/test_random.cpp tests/cpp/test_version.cpp
       - name: Configure clang-tidy
         env:
           CC: clang
