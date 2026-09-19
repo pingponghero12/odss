@@ -71,6 +71,30 @@ jobs:
       - name: Test
         run: ctest --preset ${{ matrix.preset }}
 
+  fragmentation:
+    name: NASA SBM integration / Python 3.10
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/checkout@v4
+        with:
+          repository: pingponghero12/nasa-sbm-py
+          ref: 8b774757e5780f7909d88db0c35d7e35314f5372
+          path: external/nasa-sbm-py
+          submodules: recursive
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.10"
+          cache: pip
+      - name: Install NASA SBM integration
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install "xarray<2026" "matplotlib<3.11"
+          python -m pip install --no-deps ./external/nasa-sbm-py
+          python -m pip install . pytest
+      - name: Test NASA SBM integration
+        run: python -m pytest tests/python/test_fragmentation.py
+
   quality:
     name: Quality
     runs-on: ubuntu-latest
