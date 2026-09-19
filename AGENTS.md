@@ -36,8 +36,8 @@ Priorities, in order:
 Do not sacrifice correctness for speed, but performance is a first-class
 requirement.
 
-The eventual production study must be designed to complete in approximately
-7 days or less on a 32-core CPU.
+The initial production study must be designed to complete in approximately
+2 days or less on a 32-core CPU.
 
 Avoid implementations that are obviously incompatible with this target.
 
@@ -127,8 +127,8 @@ Avoid:
 
 ## Performance
 
-The complete production workload must eventually fit within approximately one
-week on a 32-core CPU.
+The complete initial production workload must fit within approximately two
+days on a 32-core CPU.
 
 For computationally significant code:
 

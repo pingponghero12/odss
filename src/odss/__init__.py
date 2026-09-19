@@ -66,6 +66,14 @@ from .sgp4 import (
     propagate_omm_sgp4,
     synchronize_catalog_sgp4,
 )
+from .sso_dynamics import (
+    ForceModelSensitivity,
+    SsoForceModelSpec,
+    SsoPropagationSpec,
+    evaluate_force_model_sensitivity,
+    fastest_converged_force_model,
+    propagate_sso,
+)
 
 __all__ = [
     "BackendSpec",
@@ -78,6 +86,7 @@ __all__ = [
     "EarthOrientationData",
     "ExperimentSpec",
     "FragmentationResult",
+    "ForceModelSensitivity",
     "InputAssetMetadata",
     "ObservableSpec",
     "OmmRecord",
@@ -92,6 +101,8 @@ __all__ = [
     "SynchronizedCatalog",
     "SynchronizedCatalogObject",
     "Sgp4PropagationSpec",
+    "SsoForceModelSpec",
+    "SsoPropagationSpec",
     "canonical_experiment",
     "canonical_manifest",
     "canonical_study",
@@ -102,7 +113,9 @@ __all__ = [
     "epoch_from_iso",
     "epoch_to_iso",
     "experiment_hash",
+    "evaluate_force_model_sensitivity",
     "filter_sso",
+    "fastest_converged_force_model",
     "generate_collision_fragments",
     "generate_explosion_fragments",
     "named_random_key",
@@ -114,6 +127,7 @@ __all__ = [
     "parse_omm_json",
     "propagate_omm_sgp4",
     "propagate",
+    "propagate_sso",
     "study_hash",
     "select_fragments_by_size",
     "screen_conjunctions_reference",

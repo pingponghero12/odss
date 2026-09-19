@@ -38,3 +38,12 @@ python benchmarks/benchmark_cascade_screening.py --debris 10000 --targets 2000
 
 The input is a deterministic LEO-like local population. For profiling before optimization, run the
 same command through `python -m cProfile -s cumulative`.
+
+Compare the SSO force-model fidelity ladder with Cascade installed:
+
+```bash
+python benchmarks/benchmark_force_models.py --objects 1000 --duration-s 86400
+```
+
+The benchmark reports runtime and final-state differences from the explicitly configured reference
+model. Production selection must also check convergence of the downstream observables.
