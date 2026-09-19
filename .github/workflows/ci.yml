@@ -93,7 +93,10 @@ jobs:
           python -m pip install --no-deps ./external/nasa-sbm-py
           python -m pip install . pytest
       - name: Test NASA SBM integration
-        run: python -m pytest tests/python/test_fragmentation.py
+        run: >-
+          python -m pytest
+          tests/python/test_fragmentation.py
+          tests/python/test_validation.py
 
   cascade:
     name: Cascade integration / Python 3.11
@@ -119,6 +122,7 @@ jobs:
           tests/python/test_propagation.py
           tests/python/test_cascade_screening.py
           tests/python/test_sso_dynamics.py
+          tests/python/test_validation.py
 
   quality:
     name: Quality

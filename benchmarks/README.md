@@ -47,3 +47,12 @@ python benchmarks/benchmark_force_models.py --objects 1000 --duration-s 86400
 
 The benchmark reports runtime and final-state differences from the explicitly configured reference
 model. Production selection must also check convergence of the downstream observables.
+
+Measure process-level Monte Carlo scaling while keeping each run single-threaded:
+
+```bash
+python benchmarks/benchmark_monte_carlo.py --runs 32 --workers 1 2 4 8
+```
+
+The benchmark reports throughput and speedup for deterministic independent runs. Real production
+measurements should use the same worker/thread allocation with the representative scientific run.
