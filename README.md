@@ -79,3 +79,25 @@ state_gcrs = odss.transform_state(
 
 Frame conversion never downloads Earth-orientation data. The selected IERS Bulletin A or B file is
 explicit and its `earth_orientation.metadata` can be included in a `RunManifest` input-assets list.
+
+## OMM catalogs
+
+CelesTrak-compatible OMM/JSON is parsed from exact bytes so its content hash can be retained with
+explicit source and acquisition metadata:
+
+```python
+from pathlib import Path
+
+import odss
+
+catalog = odss.parse_omm_json(
+    Path("catalog.json").read_bytes(),
+    logical_name="catalog.json",
+    source_uri="https://celestrak.org/...",
+    acquired_at=acquisition_epoch,
+)
+```
+
+Catalog unions select the latest epoch and then the greatest element-set number for each catalog
+ID. `filter_sso()` requires an explicit precession-rate tolerance and compares the WGS-72 J2
+secular node rate with the Sun's mean rate; it does not use an inclination/altitude box.
