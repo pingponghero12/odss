@@ -11,6 +11,7 @@ from ._core import (
     ReferenceFrame,
     version,
 )
+from .cascade_screening import screen_conjunctions_cascade
 from .catalog import (
     Catalog,
     CatalogAcquisition,
@@ -116,6 +117,7 @@ __all__ = [
     "study_hash",
     "select_fragments_by_size",
     "screen_conjunctions_reference",
+    "screen_conjunctions_cascade",
     "synchronize_catalog_sgp4",
     "transform_state",
     "uniform_01",

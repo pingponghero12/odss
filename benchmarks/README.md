@@ -29,3 +29,12 @@ python benchmarks/benchmark_reference_screening.py --debris 200 --targets 200
 This computes exact continuous interior closest-approach events for every debris-target pair under
 the local constant-velocity model. It is a golden reference measurement, not a production
 throughput target.
+
+With Cascade installed, run the production local screening benchmark with:
+
+```bash
+python benchmarks/benchmark_cascade_screening.py --debris 10000 --targets 2000
+```
+
+The input is a deterministic LEO-like local population. For profiling before optimization, run the
+same command through `python -m cProfile -s cumulative`.

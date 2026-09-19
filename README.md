@@ -163,6 +163,24 @@ Each immutable event identifies the debris and target indices and reports TCA as
 the populations' shared epoch, miss distance in metres, and relative velocity in metres per second.
 The brute-force implementation is intended as a small-population correctness oracle.
 
+The production CPU path delegates continuous event detection and broad-phase filtering to Cascade:
+
+```python
+events = odss.screen_conjunctions_cascade(
+    debris,
+    targets,
+    duration_s=60.0,
+    threshold_m=1000.0,
+    collisional_timestep_s=10.0,
+)
+```
+
+Cascade whitelists the smaller particle role to reduce candidate generation; ODSS then retains only
+debris-target pairs because Cascade's whitelist condition is satisfied when either member belongs
+to it. Collision interruption is disabled. This backend uses the same local constant-velocity event
+definition as the golden reference; orbital curvature belongs in the propagation segments supplied
+to screening.
+
 ## NASA breakup model
 
 Fragmentation uses the external `nasa-sbm-py` package without copying its model into ODSS. The
