@@ -37,6 +37,12 @@ GCRS, and ITRS. Frame transforms require an explicit IERS Bulletin A or B table 
 automatic downloads. The table's content hash and size are exposed as provenance metadata. No
 propagation or force model is part of this boundary.
 
+OMM/JSON ingestion produces immutable GP records with explicit UTC epochs and TEME/SGP4 metadata.
+Catalog inputs retain exact content hashes, source URIs, and caller-supplied acquisition epochs.
+Unions resolve duplicate catalog IDs by element epoch and element-set number, rejecting ambiguous
+ties. Sun-synchronous filtering uses the WGS-72 J2 secular nodal-precession approximation and an
+explicit caller tolerance rather than a geometric orbit box.
+
 Study-specific code belongs under `studies/`; the core library must not depend on the current IAC
 study. Future backends may include Cascade, heyoka, SGP4, JAX, and CUDA, but this foundation neither
 implements nor designs APIs for them.

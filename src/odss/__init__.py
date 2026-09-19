@@ -11,6 +11,15 @@ from ._core import (
     ReferenceFrame,
     version,
 )
+from .catalog import (
+    Catalog,
+    CatalogAcquisition,
+    OmmRecord,
+    filter_sso,
+    nodal_precession_rate_deg_day,
+    parse_omm_json,
+    union_catalogs,
+)
 from .coordinates import (
     EarthOrientationData,
     bundled_iers_a,
@@ -43,12 +52,15 @@ from .rng import (
 
 __all__ = [
     "BackendSpec",
+    "Catalog",
+    "CatalogAcquisition",
     "CartesianState",
     "Epoch",
     "EarthOrientationData",
     "ExperimentSpec",
     "InputAssetMetadata",
     "ObservableSpec",
+    "OmmRecord",
     "ParticlePopulation",
     "PhysicalProperties",
     "ReferenceFrame",
@@ -66,12 +78,16 @@ __all__ = [
     "epoch_from_iso",
     "epoch_to_iso",
     "experiment_hash",
+    "filter_sso",
     "named_random_key",
     "named_stream_id",
+    "nodal_precession_rate_deg_day",
     "odss_software_metadata",
     "random_u64",
+    "parse_omm_json",
     "study_hash",
     "transform_state",
     "uniform_01",
+    "union_catalogs",
     "version",
 ]
