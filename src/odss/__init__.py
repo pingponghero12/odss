@@ -32,6 +32,13 @@ from .coordinates import (
     epoch_to_iso,
     transform_state,
 )
+from .flux import (
+    FluxBin,
+    FluxResult,
+    FluxSpec,
+    evaluate_flux,
+    evaluate_flux_radius_convergence,
+)
 from .fragmentation import (
     FragmentationResult,
     SatelliteType,
@@ -86,6 +93,9 @@ __all__ = [
     "EarthOrientationData",
     "ExperimentSpec",
     "FragmentationResult",
+    "FluxBin",
+    "FluxResult",
+    "FluxSpec",
     "ForceModelSensitivity",
     "InputAssetMetadata",
     "ObservableSpec",
@@ -114,6 +124,8 @@ __all__ = [
     "epoch_to_iso",
     "experiment_hash",
     "evaluate_force_model_sensitivity",
+    "evaluate_flux",
+    "evaluate_flux_radius_convergence",
     "filter_sso",
     "fastest_converged_force_model",
     "generate_collision_fragments",
