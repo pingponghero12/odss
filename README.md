@@ -117,3 +117,39 @@ and provides a WGS-72 SGP4 state in TEME with position in metres and velocity in
 The scalar `propagate_omm_sgp4()` function provides the reference path; catalog synchronization uses
 the accelerated batch interface. SGP4 error conditions are reported rather than silently returning
 invalid states.
+
+## NASA breakup model
+
+Fragmentation uses the external `nasa-sbm-py` package without copying its model into ODSS. The
+current backend release supports Python 3.10 and should be installed separately from a sibling
+checkout so its visualization-only dependencies do not replace ODSS's Astropy version:
+
+```bash
+python -m pip install "xarray<2026" "matplotlib<3.11"
+python -m pip install --no-deps -e ../nasa-sbm-py
+```
+
+Generate the smallest characteristic-length cutoff needed by the study once, then derive larger
+cutoffs without rerunning the stochastic model:
+
+```python
+key = odss.named_random_key(
+    master_seed=2026,
+    scenario_id=0,
+    run_id=0,
+    object_id=25544,
+    stream_name="nasa_sbm",
+)
+fragments = odss.generate_explosion_fragments(
+    parent_state,
+    parent_properties,
+    satellite_type="spacecraft",
+    minimum_characteristic_length_m=0.01,
+    random_key=key,
+)
+trackable_fragments = odss.select_fragments_by_size(fragments, 0.10)
+```
+
+Explosion and collision results contain an immutable `ParticlePopulation` plus characteristic
+length, area-to-mass ratio, and delta-velocity components in SI units. The backend seed is derived
+deterministically from the supplied ODSS random key and recorded with the result.

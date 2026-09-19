@@ -50,5 +50,13 @@ OMM record and its element epoch. The signed propagation offset is stored on eve
 object. Heyoka SGP4 is not used because its current lack of deep-space propagation would make this
 general catalog operation invalid for GEO objects.
 
+Fragmentation is a thin, optional adapter around `nasa-sbm-py`; ODSS does not reimplement the NASA
+Standard Breakup Model. Parent states cross the backend boundary with explicit epoch and frame
+metadata, and backend kilometre values are converted back to SI. One Philox value from the supplied
+random key is reduced to the backend's non-negative 31-bit seed range. The immutable result records
+that seed and key alongside the fragment population, characteristic lengths, area-to-mass ratios,
+and delta velocities. Larger size cutoffs are pure subsets of the result generated at the smallest
+requested cutoff, so comparisons do not consume different stochastic realizations.
+
 Study-specific code belongs under `studies/`; the core library must not depend on the current IAC
 study. Other propagation backends remain outside the catalog synchronization interface.
