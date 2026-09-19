@@ -144,6 +144,25 @@ boundary and must not be interpreted as the selected production SSO force model.
 are first synchronized with SGP4 and transformed from TEME into the shared inertial simulation frame;
 the architecture decision is recorded in `docs/adr/0001-mixed-propagation.md`.
 
+## Reference conjunction screening
+
+The reference detector evaluates every debris-target pair and solves interior closest-approach
+events continuously over a local constant-velocity interval. It does not compare states only at
+sample times. Interval-boundary occupancy and constant separation are not unique TCA events:
+
+```python
+events = odss.screen_conjunctions_reference(
+    debris,
+    targets,
+    duration_s=60.0,
+    threshold_m=1000.0,
+)
+```
+
+Each immutable event identifies the debris and target indices and reports TCA as SI seconds after
+the populations' shared epoch, miss distance in metres, and relative velocity in metres per second.
+The brute-force implementation is intended as a small-population correctness oracle.
+
 ## NASA breakup model
 
 Fragmentation uses the external `nasa-sbm-py` package without copying its model into ODSS. The

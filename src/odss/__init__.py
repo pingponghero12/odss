@@ -20,6 +20,7 @@ from .catalog import (
     parse_omm_json,
     union_catalogs,
 )
+from .conjunction import ConjunctionEvent, screen_conjunctions_reference
 from .coordinates import (
     EarthOrientationData,
     bundled_iers_a,
@@ -71,6 +72,7 @@ __all__ = [
     "CatalogAcquisition",
     "CascadePropagationSpec",
     "CartesianState",
+    "ConjunctionEvent",
     "Epoch",
     "EarthOrientationData",
     "ExperimentSpec",
@@ -113,6 +115,7 @@ __all__ = [
     "propagate",
     "study_hash",
     "select_fragments_by_size",
+    "screen_conjunctions_reference",
     "synchronize_catalog_sgp4",
     "transform_state",
     "uniform_01",
