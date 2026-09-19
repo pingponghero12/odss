@@ -47,6 +47,7 @@ from .fragmentation import (
     nasa_sbm_seed,
     select_fragments_by_size,
 )
+from .maneuver import ManeuverDemandResult, ManeuverDemandSpec, evaluate_maneuver_demand
 from .orbital_observables import (
     EscapeResult,
     ImpactRiskResult,
@@ -113,6 +114,8 @@ __all__ = [
     "InputAssetMetadata",
     "ImpactRiskResult",
     "ImpactRiskValue",
+    "ManeuverDemandResult",
+    "ManeuverDemandSpec",
     "ObservableSpec",
     "OrbitClassification",
     "OrbitalDecayDiagnostic",
@@ -148,6 +151,7 @@ __all__ = [
     "evaluate_decay",
     "evaluate_escape",
     "evaluate_impact_risk",
+    "evaluate_maneuver_demand",
     "filter_sso",
     "fastest_converged_force_model",
     "generate_collision_fragments",
