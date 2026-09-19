@@ -32,6 +32,13 @@ from .coordinates import (
     epoch_to_iso,
     transform_state,
 )
+from .flux import (
+    FluxBin,
+    FluxResult,
+    FluxSpec,
+    evaluate_flux,
+    evaluate_flux_radius_convergence,
+)
 from .fragmentation import (
     FragmentationResult,
     SatelliteType,
@@ -39,6 +46,19 @@ from .fragmentation import (
     generate_explosion_fragments,
     nasa_sbm_seed,
     select_fragments_by_size,
+)
+from .maneuver import ManeuverDemandResult, ManeuverDemandSpec, evaluate_maneuver_demand
+from .orbital_observables import (
+    EscapeResult,
+    ImpactRiskResult,
+    ImpactRiskValue,
+    OrbitalDecayDiagnostic,
+    OrbitalDecayResult,
+    OrbitalDecaySpec,
+    OrbitClassification,
+    evaluate_decay,
+    evaluate_escape,
+    evaluate_impact_risk,
 )
 from .propagation import CascadePropagationSpec, Sgp4PropagationSpec, propagate
 from .provenance import (
@@ -66,6 +86,14 @@ from .sgp4 import (
     propagate_omm_sgp4,
     synchronize_catalog_sgp4,
 )
+from .sso_dynamics import (
+    ForceModelSensitivity,
+    SsoForceModelSpec,
+    SsoPropagationSpec,
+    evaluate_force_model_sensitivity,
+    fastest_converged_force_model,
+    propagate_sso,
+)
 
 __all__ = [
     "BackendSpec",
@@ -76,10 +104,23 @@ __all__ = [
     "ConjunctionEvent",
     "Epoch",
     "EarthOrientationData",
+    "EscapeResult",
     "ExperimentSpec",
     "FragmentationResult",
+    "FluxBin",
+    "FluxResult",
+    "FluxSpec",
+    "ForceModelSensitivity",
     "InputAssetMetadata",
+    "ImpactRiskResult",
+    "ImpactRiskValue",
+    "ManeuverDemandResult",
+    "ManeuverDemandSpec",
     "ObservableSpec",
+    "OrbitClassification",
+    "OrbitalDecayDiagnostic",
+    "OrbitalDecayResult",
+    "OrbitalDecaySpec",
     "OmmRecord",
     "ParticlePopulation",
     "PhysicalProperties",
@@ -92,6 +133,8 @@ __all__ = [
     "SynchronizedCatalog",
     "SynchronizedCatalogObject",
     "Sgp4PropagationSpec",
+    "SsoForceModelSpec",
+    "SsoPropagationSpec",
     "canonical_experiment",
     "canonical_manifest",
     "canonical_study",
@@ -102,7 +145,15 @@ __all__ = [
     "epoch_from_iso",
     "epoch_to_iso",
     "experiment_hash",
+    "evaluate_force_model_sensitivity",
+    "evaluate_flux",
+    "evaluate_flux_radius_convergence",
+    "evaluate_decay",
+    "evaluate_escape",
+    "evaluate_impact_risk",
+    "evaluate_maneuver_demand",
     "filter_sso",
+    "fastest_converged_force_model",
     "generate_collision_fragments",
     "generate_explosion_fragments",
     "named_random_key",
@@ -114,6 +165,7 @@ __all__ = [
     "parse_omm_json",
     "propagate_omm_sgp4",
     "propagate",
+    "propagate_sso",
     "study_hash",
     "select_fragments_by_size",
     "screen_conjunctions_reference",

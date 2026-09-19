@@ -118,6 +118,7 @@ jobs:
           python -m pytest
           tests/python/test_propagation.py
           tests/python/test_cascade_screening.py
+          tests/python/test_sso_dynamics.py
 
   quality:
     name: Quality
