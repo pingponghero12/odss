@@ -34,8 +34,8 @@ run-level RNG identity but not individual object, stream, or draw coordinates.
 Astronomical time and frame conversions are explicit Python boundary operations backed by
 Astropy/ERFA. Supported time scales are UTC, TAI, and TT; supported geocentric frames are TEME,
 GCRS, and ITRS. Frame transforms require an explicit IERS Bulletin A or B table and disable
-automatic downloads. The table's content hash and size are exposed as provenance metadata. No
-propagation or force model is part of this boundary.
+automatic downloads. The table's content hash and size are exposed as provenance metadata. Frame
+conversion remains separate from propagation and force models.
 
 OMM/JSON ingestion produces immutable GP records with explicit UTC epochs and TEME/SGP4 metadata.
 Catalog inputs retain exact content hashes, source URIs, and caller-supplied acquisition epochs.
@@ -43,6 +43,12 @@ Unions resolve duplicate catalog IDs by element epoch and element-set number, re
 ties. Sun-synchronous filtering uses the WGS-72 J2 secular nodal-precession approximation and an
 explicit caller tolerance rather than a geometric orbit box.
 
+Catalog synchronization uses the maintained `sgp4` implementation with the WGS-72 gravity model.
+The scalar path is the reference operation and the catalog path uses its accelerated satellite-array
+API. Both produce SI-valued TEME states at one explicit absolute epoch while retaining each original
+OMM record and its element epoch. The signed propagation offset is stored on every synchronized
+object. Heyoka SGP4 is not used because its current lack of deep-space propagation would make this
+general catalog operation invalid for GEO objects.
+
 Study-specific code belongs under `studies/`; the core library must not depend on the current IAC
-study. Future backends may include Cascade, heyoka, SGP4, JAX, and CUDA, but this foundation neither
-implements nor designs APIs for them.
+study. Other propagation backends remain outside the catalog synchronization interface.

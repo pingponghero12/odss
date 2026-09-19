@@ -101,3 +101,19 @@ catalog = odss.parse_omm_json(
 Catalog unions select the latest epoch and then the greatest element-set number for each catalog
 ID. `filter_sso()` requires an explicit precession-rate tolerance and compares the WGS-72 J2
 secular node rate with the Sun's mean rate; it does not use an inclination/altitude box.
+
+## Common-epoch SGP4 synchronization
+
+Catalog elements retain their individual UTC epochs. Synchronize them to one absolute epoch before
+using their Cartesian states together:
+
+```python
+simulation_epoch = odss.epoch_from_iso("2026-06-20T00:00:00", "UTC")
+synchronized = odss.synchronize_catalog_sgp4(catalog, simulation_epoch)
+```
+
+Each result preserves its original `OmmRecord`, records the signed propagation offset in SI seconds,
+and provides a WGS-72 SGP4 state in TEME with position in metres and velocity in metres per second.
+The scalar `propagate_omm_sgp4()` function provides the reference path; catalog synchronization uses
+the accelerated batch interface. SGP4 error conditions are reported rather than silently returning
+invalid states.

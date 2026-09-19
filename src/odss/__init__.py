@@ -49,6 +49,12 @@ from .rng import (
     random_u64,
     uniform_01,
 )
+from .sgp4 import (
+    SynchronizedCatalog,
+    SynchronizedCatalogObject,
+    propagate_omm_sgp4,
+    synchronize_catalog_sgp4,
+)
 
 __all__ = [
     "BackendSpec",
@@ -68,6 +74,8 @@ __all__ = [
     "RandomKey",
     "RunManifest",
     "SoftwareMetadata",
+    "SynchronizedCatalog",
+    "SynchronizedCatalogObject",
     "canonical_experiment",
     "canonical_manifest",
     "canonical_study",
@@ -85,7 +93,9 @@ __all__ = [
     "odss_software_metadata",
     "random_u64",
     "parse_omm_json",
+    "propagate_omm_sgp4",
     "study_hash",
+    "synchronize_catalog_sgp4",
     "transform_state",
     "uniform_01",
     "union_catalogs",
