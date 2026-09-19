@@ -95,6 +95,30 @@ jobs:
       - name: Test NASA SBM integration
         run: python -m pytest tests/python/test_fragmentation.py
 
+  cascade:
+    name: Cascade integration / Python 3.11
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        shell: bash -el {0}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: conda-incubator/setup-miniconda@v3
+        with:
+          activate-environment: odss-cascade
+          python-version: "3.11"
+          channels: conda-forge
+          channel-priority: strict
+      - name: Install Cascade integration
+        run: |
+          conda install --yes cascade=0.1.10
+          python -m pip install . pytest
+      - name: Test Cascade integration
+        run: >-
+          python -m pytest
+          tests/python/test_propagation.py
+          tests/python/test_cascade_screening.py
+
   quality:
     name: Quality
     runs-on: ubuntu-latest

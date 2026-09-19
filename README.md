@@ -118,6 +118,69 @@ The scalar `propagate_omm_sgp4()` function provides the reference path; catalog 
 the accelerated batch interface. SGP4 error conditions are reported rather than silently returning
 invalid states.
 
+## Numerical propagation
+
+Cascade is an optional numerical backend. Its conda-forge package is the preferred installation
+because it includes the compatible C++ dependency stack:
+
+```bash
+conda install -c conda-forge cascade
+```
+
+Particle propagation uses SI values and requires explicit GCRS initial states:
+
+```python
+final_population = odss.propagate(
+    initial_population,
+    odss.CascadePropagationSpec(
+        duration_s=5400.0,
+        collisional_timestep_s=60.0,
+    ),
+)
+```
+
+The current numerical adapter uses point-mass Earth gravity only. It establishes the backend
+boundary and must not be interpreted as the selected production SSO force model. Catalog targets
+are first synchronized with SGP4 and transformed from TEME into the shared inertial simulation frame;
+the architecture decision is recorded in `docs/adr/0001-mixed-propagation.md`.
+
+## Reference conjunction screening
+
+The reference detector evaluates every debris-target pair and solves interior closest-approach
+events continuously over a local constant-velocity interval. It does not compare states only at
+sample times. Interval-boundary occupancy and constant separation are not unique TCA events:
+
+```python
+events = odss.screen_conjunctions_reference(
+    debris,
+    targets,
+    duration_s=60.0,
+    threshold_m=1000.0,
+)
+```
+
+Each immutable event identifies the debris and target indices and reports TCA as SI seconds after
+the populations' shared epoch, miss distance in metres, and relative velocity in metres per second.
+The brute-force implementation is intended as a small-population correctness oracle.
+
+The production CPU path delegates continuous event detection and broad-phase filtering to Cascade:
+
+```python
+events = odss.screen_conjunctions_cascade(
+    debris,
+    targets,
+    duration_s=60.0,
+    threshold_m=1000.0,
+    collisional_timestep_s=10.0,
+)
+```
+
+Cascade whitelists the smaller particle role to reduce candidate generation; ODSS then retains only
+debris-target pairs because Cascade's whitelist condition is satisfied when either member belongs
+to it. Collision interruption is disabled. This backend uses the same local constant-velocity event
+definition as the golden reference; orbital curvature belongs in the propagation segments supplied
+to screening.
+
 ## NASA breakup model
 
 Fragmentation uses the external `nasa-sbm-py` package without copying its model into ODSS. The

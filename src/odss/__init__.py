@@ -11,6 +11,7 @@ from ._core import (
     ReferenceFrame,
     version,
 )
+from .cascade_screening import screen_conjunctions_cascade
 from .catalog import (
     Catalog,
     CatalogAcquisition,
@@ -20,6 +21,7 @@ from .catalog import (
     parse_omm_json,
     union_catalogs,
 )
+from .conjunction import ConjunctionEvent, screen_conjunctions_reference
 from .coordinates import (
     EarthOrientationData,
     bundled_iers_a,
@@ -38,6 +40,7 @@ from .fragmentation import (
     nasa_sbm_seed,
     select_fragments_by_size,
 )
+from .propagation import CascadePropagationSpec, Sgp4PropagationSpec, propagate
 from .provenance import (
     InputAssetMetadata,
     RunManifest,
@@ -68,7 +71,9 @@ __all__ = [
     "BackendSpec",
     "Catalog",
     "CatalogAcquisition",
+    "CascadePropagationSpec",
     "CartesianState",
+    "ConjunctionEvent",
     "Epoch",
     "EarthOrientationData",
     "ExperimentSpec",
@@ -86,6 +91,7 @@ __all__ = [
     "SatelliteType",
     "SynchronizedCatalog",
     "SynchronizedCatalogObject",
+    "Sgp4PropagationSpec",
     "canonical_experiment",
     "canonical_manifest",
     "canonical_study",
@@ -107,8 +113,11 @@ __all__ = [
     "random_u64",
     "parse_omm_json",
     "propagate_omm_sgp4",
+    "propagate",
     "study_hash",
     "select_fragments_by_size",
+    "screen_conjunctions_reference",
+    "screen_conjunctions_cascade",
     "synchronize_catalog_sgp4",
     "transform_state",
     "uniform_01",
