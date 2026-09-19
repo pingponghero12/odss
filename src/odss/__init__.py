@@ -38,6 +38,7 @@ from .fragmentation import (
     nasa_sbm_seed,
     select_fragments_by_size,
 )
+from .propagation import CascadePropagationSpec, Sgp4PropagationSpec, propagate
 from .provenance import (
     InputAssetMetadata,
     RunManifest,
@@ -68,6 +69,7 @@ __all__ = [
     "BackendSpec",
     "Catalog",
     "CatalogAcquisition",
+    "CascadePropagationSpec",
     "CartesianState",
     "Epoch",
     "EarthOrientationData",
@@ -86,6 +88,7 @@ __all__ = [
     "SatelliteType",
     "SynchronizedCatalog",
     "SynchronizedCatalogObject",
+    "Sgp4PropagationSpec",
     "canonical_experiment",
     "canonical_manifest",
     "canonical_study",
@@ -107,6 +110,7 @@ __all__ = [
     "random_u64",
     "parse_omm_json",
     "propagate_omm_sgp4",
+    "propagate",
     "study_hash",
     "select_fragments_by_size",
     "synchronize_catalog_sgp4",

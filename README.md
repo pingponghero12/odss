@@ -118,6 +118,32 @@ The scalar `propagate_omm_sgp4()` function provides the reference path; catalog 
 the accelerated batch interface. SGP4 error conditions are reported rather than silently returning
 invalid states.
 
+## Numerical propagation
+
+Cascade is an optional numerical backend. Its conda-forge package is the preferred installation
+because it includes the compatible C++ dependency stack:
+
+```bash
+conda install -c conda-forge cascade
+```
+
+Particle propagation uses SI values and requires explicit GCRS initial states:
+
+```python
+final_population = odss.propagate(
+    initial_population,
+    odss.CascadePropagationSpec(
+        duration_s=5400.0,
+        collisional_timestep_s=60.0,
+    ),
+)
+```
+
+The current numerical adapter uses point-mass Earth gravity only. It establishes the backend
+boundary and must not be interpreted as the selected production SSO force model. Catalog targets
+are first synchronized with SGP4 and transformed from TEME into the shared inertial simulation frame;
+the architecture decision is recorded in `docs/adr/0001-mixed-propagation.md`.
+
 ## NASA breakup model
 
 Fragmentation uses the external `nasa-sbm-py` package without copying its model into ODSS. The
