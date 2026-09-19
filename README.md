@@ -62,3 +62,20 @@ sample = odss.uniform_01(key, draw_index=7)
 The same address always produces the same value, independent of thread scheduling. A
 `RunManifest` records the master seed, scenario ID, run ID, and RNG algorithm needed to identify
 the run's stochastic inputs.
+
+## Time and coordinate frames
+
+Time conversion supports explicit UTC, TAI, and TT epochs, including UTC leap seconds. Cartesian
+states can be explicitly transformed among TEME, GCRS, and ITRS using Astropy/ERFA:
+
+```python
+earth_orientation = odss.bundled_iers_a()
+state_gcrs = odss.transform_state(
+    state_teme,
+    odss.ReferenceFrame("GCRS"),
+    earth_orientation,
+)
+```
+
+Frame conversion never downloads Earth-orientation data. The selected IERS Bulletin A or B file is
+explicit and its `earth_orientation.metadata` can be included in a `RunManifest` input-assets list.

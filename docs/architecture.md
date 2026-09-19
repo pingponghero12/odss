@@ -31,6 +31,12 @@ Python stream names are converted to stable 64-bit IDs with domain-separated SHA
 random access independent of execution order and thread scheduling. Run manifests record the
 run-level RNG identity but not individual object, stream, or draw coordinates.
 
+Astronomical time and frame conversions are explicit Python boundary operations backed by
+Astropy/ERFA. Supported time scales are UTC, TAI, and TT; supported geocentric frames are TEME,
+GCRS, and ITRS. Frame transforms require an explicit IERS Bulletin A or B table and disable
+automatic downloads. The table's content hash and size are exposed as provenance metadata. No
+propagation or force model is part of this boundary.
+
 Study-specific code belongs under `studies/`; the core library must not depend on the current IAC
 study. Future backends may include Cascade, heyoka, SGP4, JAX, and CUDA, but this foundation neither
 implements nor designs APIs for them.
