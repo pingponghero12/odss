@@ -1,12 +1,17 @@
-"""Transactional event-oriented persistence for scientific run results."""
+"""Xarray-native NetCDF persistence for selected scientific run results."""
 
 from __future__ import annotations
 
 import json
 import math
-import sqlite3
+import os
+import tempfile
 from dataclasses import dataclass
 from pathlib import Path
+from typing import cast
+
+import numpy as np
+import xarray as xr
 
 from .conjunction import ConjunctionEvent
 from .flux import FluxBin, FluxResult, FluxSpec
@@ -19,10 +24,12 @@ from .provenance import (
 )
 from .rng import _require_uint64
 
+_schema = "odss.run_result.v1"
+
 
 @dataclass(frozen=True, slots=True)
 class ResultIdentity:
-    """Join identity shared by every persistent result table."""
+    """Identity shared by a run file and every scientific value it contains."""
 
     study_id: str
     scenario_id: int
@@ -37,7 +44,7 @@ class ResultIdentity:
 
 @dataclass(frozen=True, slots=True)
 class ScalarRunResult:
-    """One named finite scalar stored in the run-summary table."""
+    """One named finite scalar and its physical unit."""
 
     name: str
     value: float
@@ -92,229 +99,234 @@ class RunResult:
         )
 
 
-_schema = """
-PRAGMA foreign_keys = ON;
-CREATE TABLE IF NOT EXISTS manifests (
-    study_id TEXT NOT NULL,
-    scenario_id TEXT NOT NULL,
-    run_id TEXT NOT NULL,
-    canonical_json TEXT NOT NULL,
-    PRIMARY KEY (study_id, scenario_id, run_id)
-);
-CREATE TABLE IF NOT EXISTS run_summaries (
-    study_id TEXT NOT NULL,
-    scenario_id TEXT NOT NULL,
-    run_id TEXT NOT NULL,
-    name TEXT NOT NULL,
-    value REAL NOT NULL,
-    unit TEXT NOT NULL,
-    PRIMARY KEY (study_id, scenario_id, run_id, name),
-    FOREIGN KEY (study_id, scenario_id, run_id)
-        REFERENCES manifests (study_id, scenario_id, run_id) ON DELETE CASCADE
-);
-CREATE TABLE IF NOT EXISTS conjunctions (
-    study_id TEXT NOT NULL,
-    scenario_id TEXT NOT NULL,
-    run_id TEXT NOT NULL,
-    event_index INTEGER NOT NULL,
-    debris_index INTEGER NOT NULL,
-    target_index INTEGER NOT NULL,
-    tca_s REAL NOT NULL,
-    miss_distance_m REAL NOT NULL,
-    relative_velocity_m_s REAL NOT NULL,
-    PRIMARY KEY (study_id, scenario_id, run_id, event_index),
-    FOREIGN KEY (study_id, scenario_id, run_id)
-        REFERENCES manifests (study_id, scenario_id, run_id) ON DELETE CASCADE
-);
-CREATE TABLE IF NOT EXISTS flux_specs (
-    study_id TEXT NOT NULL,
-    scenario_id TEXT NOT NULL,
-    run_id TEXT NOT NULL,
-    target_count INTEGER NOT NULL,
-    sampling_radius_m REAL NOT NULL,
-    time_bin_edges_hex TEXT NOT NULL,
-    size_bin_edges_hex TEXT NOT NULL,
-    PRIMARY KEY (study_id, scenario_id, run_id),
-    FOREIGN KEY (study_id, scenario_id, run_id)
-        REFERENCES manifests (study_id, scenario_id, run_id) ON DELETE CASCADE
-);
-CREATE TABLE IF NOT EXISTS target_flux (
-    study_id TEXT NOT NULL,
-    scenario_id TEXT NOT NULL,
-    run_id TEXT NOT NULL,
-    bin_index INTEGER NOT NULL,
-    target_index INTEGER NOT NULL,
-    time_start_s REAL NOT NULL,
-    time_end_s REAL NOT NULL,
-    size_min_hex TEXT NOT NULL,
-    size_max_hex TEXT NOT NULL,
-    encounter_count INTEGER NOT NULL,
-    number_flux_m2_s REAL NOT NULL,
-    mass_flux_kg_m2_s REAL NOT NULL,
-    kinetic_energy_flux_w_m2 REAL NOT NULL,
-    PRIMARY KEY (study_id, scenario_id, run_id, bin_index),
-    FOREIGN KEY (study_id, scenario_id, run_id)
-        REFERENCES manifests (study_id, scenario_id, run_id) ON DELETE CASCADE
-);
-CREATE TABLE IF NOT EXISTS maneuver_demand (
-    study_id TEXT NOT NULL,
-    scenario_id TEXT NOT NULL,
-    run_id TEXT NOT NULL,
-    target_count INTEGER NOT NULL,
-    trackability_size_threshold_m REAL NOT NULL,
-    miss_distance_threshold_m REAL NOT NULL,
-    duration_s REAL NOT NULL,
-    deduplication_tolerance_s REAL NOT NULL,
-    event_rate_s REAL NOT NULL,
-    probability_at_least_one REAL NOT NULL,
-    PRIMARY KEY (study_id, scenario_id, run_id),
-    FOREIGN KEY (study_id, scenario_id, run_id)
-        REFERENCES manifests (study_id, scenario_id, run_id) ON DELETE CASCADE
-);
-CREATE TABLE IF NOT EXISTS maneuver_events (
-    study_id TEXT NOT NULL,
-    scenario_id TEXT NOT NULL,
-    run_id TEXT NOT NULL,
-    event_index INTEGER NOT NULL,
-    debris_index INTEGER NOT NULL,
-    target_index INTEGER NOT NULL,
-    tca_s REAL NOT NULL,
-    miss_distance_m REAL NOT NULL,
-    relative_velocity_m_s REAL NOT NULL,
-    PRIMARY KEY (study_id, scenario_id, run_id, event_index),
-    FOREIGN KEY (study_id, scenario_id, run_id)
-        REFERENCES manifests (study_id, scenario_id, run_id) ON DELETE CASCADE
-);
-CREATE TABLE IF NOT EXISTS maneuver_target_counts (
-    study_id TEXT NOT NULL,
-    scenario_id TEXT NOT NULL,
-    run_id TEXT NOT NULL,
-    target_index INTEGER NOT NULL,
-    event_count INTEGER NOT NULL,
-    PRIMARY KEY (study_id, scenario_id, run_id, target_index),
-    FOREIGN KEY (study_id, scenario_id, run_id)
-        REFERENCES manifests (study_id, scenario_id, run_id) ON DELETE CASCADE
-);
-"""
+def _event_variables(
+    prefix: str,
+    dimension: str,
+    events: tuple[ConjunctionEvent, ...],
+) -> dict[str, tuple[tuple[str], np.ndarray]]:
+    return {
+        f"{prefix}_debris_index": (
+            (dimension,),
+            np.asarray([event.debris_index for event in events], dtype=np.int64),
+        ),
+        f"{prefix}_target_index": (
+            (dimension,),
+            np.asarray([event.target_index for event in events], dtype=np.int64),
+        ),
+        f"{prefix}_tca_s": (
+            (dimension,),
+            np.asarray([event.tca_s for event in events], dtype=np.float64),
+        ),
+        f"{prefix}_miss_distance_m": (
+            (dimension,),
+            np.asarray([event.miss_distance_m for event in events], dtype=np.float64),
+        ),
+        f"{prefix}_relative_velocity_m_s": (
+            (dimension,),
+            np.asarray([event.relative_velocity_m_s for event in events], dtype=np.float64),
+        ),
+    }
 
 
-def _identity_values(identity: ResultIdentity) -> tuple[str, str, str]:
-    return identity.study_id, str(identity.scenario_id), str(identity.run_id)
+def _require_canonical_flux_bins(flux: FluxResult) -> tuple[int, int]:
+    time_count = len(flux.spec.time_bin_edges_s) - 1
+    size_count = len(flux.spec.size_bin_edges_m) - 1
+    expected_count = flux.target_count * time_count * size_count
+    if len(flux.bins) != expected_count:
+        raise ValueError("flux bins must cover every target, time bin, and size bin")
+    for flat_index, value in enumerate(flux.bins):
+        target_index = flat_index // (time_count * size_count)
+        remainder = flat_index % (time_count * size_count)
+        time_index = remainder // size_count
+        size_index = remainder % size_count
+        expected = (
+            target_index,
+            flux.spec.time_bin_edges_s[time_index],
+            flux.spec.time_bin_edges_s[time_index + 1],
+            flux.spec.size_bin_edges_m[size_index],
+            flux.spec.size_bin_edges_m[size_index + 1],
+        )
+        actual = (
+            value.target_index,
+            value.time_start_s,
+            value.time_end_s,
+            value.size_min_m,
+            value.size_max_m,
+        )
+        if actual != expected:
+            raise ValueError("flux bins must use canonical target, time, and size order")
+    return time_count, size_count
 
 
-def _float_tuple_json(values: tuple[float, ...]) -> str:
-    return json.dumps([float(value).hex() for value in values], separators=(",", ":"))
+def _set_units(dataset: xr.Dataset) -> None:
+    units = {
+        "conjunction_tca_s": "s",
+        "conjunction_miss_distance_m": "m",
+        "conjunction_relative_velocity_m_s": "m s-1",
+        "flux_sampling_radius_m": "m",
+        "time_bin_start_s": "s",
+        "time_bin_end_s": "s",
+        "size_bin_min_m": "m",
+        "size_bin_max_m": "m",
+        "number_flux_m2_s": "m-2 s-1",
+        "mass_flux_kg_m2_s": "kg m-2 s-1",
+        "kinetic_energy_flux_w_m2": "W m-2",
+        "maneuver_trackability_size_threshold_m": "m",
+        "maneuver_miss_distance_threshold_m": "m",
+        "maneuver_duration_s": "s",
+        "maneuver_deduplication_tolerance_s": "s",
+        "maneuver_event_rate_s": "s-1",
+        "maneuver_probability_at_least_one": "1",
+        "maneuver_tca_s": "s",
+        "maneuver_miss_distance_m": "m",
+        "maneuver_relative_velocity_m_s": "m s-1",
+    }
+    for name, unit in units.items():
+        if name in dataset:
+            dataset[name].attrs["units"] = unit
 
 
-def _decode_float_tuple(value: str) -> tuple[float, ...]:
-    return tuple(float.fromhex(item) for item in json.loads(value))
-
-
-def _event_values(
-    identity: tuple[str, str, str],
-    index: int,
-    event: ConjunctionEvent,
-) -> tuple[object, ...]:
-    return (
-        *identity,
-        index,
-        event.debris_index,
-        event.target_index,
-        event.tca_s,
-        event.miss_distance_m,
-        event.relative_velocity_m_s,
-    )
-
-
-def write_run_result(database_path: str | Path, result: RunResult) -> None:
-    """Atomically append one run; existing run identities are never overwritten."""
+def run_result_dataset(result: RunResult) -> xr.Dataset:
+    """Represent one run as a self-describing xarray dataset."""
     if not isinstance(result, RunResult):
         raise TypeError("result must be a RunResult")
-    path = Path(database_path)
-    if not path.parent.exists():
-        raise FileNotFoundError(f"result directory does not exist: {path.parent}")
-    identity = _identity_values(result.identity)
-    try:
-        with sqlite3.connect(path) as connection:
-            connection.executescript(_schema)
-            connection.execute(
-                "INSERT INTO manifests VALUES (?, ?, ?, ?)",
-                (*identity, canonical_manifest(result.manifest)),
-            )
-            connection.executemany(
-                "INSERT INTO run_summaries VALUES (?, ?, ?, ?, ?, ?)",
-                ((*identity, value.name, value.value, value.unit) for value in result.summary),
-            )
-            connection.executemany(
-                "INSERT INTO conjunctions VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
-                (
-                    _event_values(identity, index, event)
-                    for index, event in enumerate(result.conjunctions)
+    identity = result.identity
+    coordinates: dict[str, object] = {
+        "study_id": identity.study_id,
+        "scenario_id": str(identity.scenario_id),
+        "run_id": str(identity.run_id),
+        "summary": np.arange(len(result.summary), dtype=np.int64),
+        "conjunction_event": np.arange(len(result.conjunctions), dtype=np.int64),
+    }
+    variables: dict[str, object] = {
+        "manifest_json": canonical_manifest(result.manifest),
+        "summary_name": (
+            ("summary",),
+            np.asarray([value.name for value in result.summary], dtype=str),
+        ),
+        "summary_value": (
+            ("summary",),
+            np.asarray([value.value for value in result.summary], dtype=np.float64),
+        ),
+        "summary_unit": (
+            ("summary",),
+            np.asarray([value.unit for value in result.summary], dtype=str),
+        ),
+        "has_flux": np.int8(result.flux is not None),
+        "has_maneuver_demand": np.int8(result.maneuver_demand is not None),
+        **_event_variables("conjunction", "conjunction_event", result.conjunctions),
+    }
+
+    target_count: int | None = None
+    if result.flux is not None:
+        flux = result.flux
+        time_count, size_count = _require_canonical_flux_bins(flux)
+        target_count = flux.target_count
+        coordinates.update(
+            {
+                "target": np.arange(target_count, dtype=np.int64),
+                "time_bin": np.arange(time_count, dtype=np.int64),
+                "size_bin": np.arange(size_count, dtype=np.int64),
+            }
+        )
+        shape = (target_count, time_count, size_count)
+        variables.update(
+            {
+                "flux_sampling_radius_m": flux.spec.sampling_radius_m,
+                "time_bin_start_s": (
+                    ("time_bin",),
+                    np.asarray(flux.spec.time_bin_edges_s[:-1], dtype=np.float64),
                 ),
-            )
-            if result.flux is not None:
-                flux = result.flux
-                connection.execute(
-                    "INSERT INTO flux_specs VALUES (?, ?, ?, ?, ?, ?, ?)",
-                    (
-                        *identity,
-                        flux.target_count,
-                        flux.spec.sampling_radius_m,
-                        _float_tuple_json(flux.spec.time_bin_edges_s),
-                        _float_tuple_json(flux.spec.size_bin_edges_m),
-                    ),
-                )
-                connection.executemany(
-                    "INSERT INTO target_flux VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-                    (
-                        (
-                            *identity,
-                            index,
-                            value.target_index,
-                            value.time_start_s,
-                            value.time_end_s,
-                            value.size_min_m.hex(),
-                            value.size_max_m.hex(),
-                            value.encounter_count,
-                            value.number_flux_m2_s,
-                            value.mass_flux_kg_m2_s,
-                            value.kinetic_energy_flux_w_m2,
-                        )
-                        for index, value in enumerate(flux.bins)
-                    ),
-                )
-            if result.maneuver_demand is not None:
-                demand = result.maneuver_demand
-                connection.execute(
-                    "INSERT INTO maneuver_demand VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-                    (
-                        *identity,
-                        len(demand.events_per_target),
-                        demand.spec.trackability_size_threshold_m,
-                        demand.spec.miss_distance_threshold_m,
-                        demand.spec.duration_s,
-                        demand.spec.deduplication_tolerance_s,
-                        demand.event_rate_s,
-                        demand.probability_at_least_one_actionable_encounter,
-                    ),
-                )
-                connection.executemany(
-                    "INSERT INTO maneuver_events VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
-                    (
-                        _event_values(identity, index, event)
-                        for index, event in enumerate(demand.actionable_encounters)
-                    ),
-                )
-                connection.executemany(
-                    "INSERT INTO maneuver_target_counts VALUES (?, ?, ?, ?, ?)",
-                    (
-                        (*identity, target_index, event_count)
-                        for target_index, event_count in enumerate(demand.events_per_target)
-                    ),
-                )
-    except sqlite3.IntegrityError as error:
-        message = f"run result already exists or is internally inconsistent: {result.identity}"
-        raise ValueError(message) from error
+                "time_bin_end_s": (
+                    ("time_bin",),
+                    np.asarray(flux.spec.time_bin_edges_s[1:], dtype=np.float64),
+                ),
+                "size_bin_min_m": (
+                    ("size_bin",),
+                    np.asarray(flux.spec.size_bin_edges_m[:-1], dtype=np.float64),
+                ),
+                "size_bin_max_m": (
+                    ("size_bin",),
+                    np.asarray(flux.spec.size_bin_edges_m[1:], dtype=np.float64),
+                ),
+                "flux_encounter_count": (
+                    ("target", "time_bin", "size_bin"),
+                    np.asarray(
+                        [value.encounter_count for value in flux.bins], dtype=np.int64
+                    ).reshape(shape),
+                ),
+                "number_flux_m2_s": (
+                    ("target", "time_bin", "size_bin"),
+                    np.asarray(
+                        [value.number_flux_m2_s for value in flux.bins], dtype=np.float64
+                    ).reshape(shape),
+                ),
+                "mass_flux_kg_m2_s": (
+                    ("target", "time_bin", "size_bin"),
+                    np.asarray(
+                        [value.mass_flux_kg_m2_s for value in flux.bins], dtype=np.float64
+                    ).reshape(shape),
+                ),
+                "kinetic_energy_flux_w_m2": (
+                    ("target", "time_bin", "size_bin"),
+                    np.asarray(
+                        [value.kinetic_energy_flux_w_m2 for value in flux.bins],
+                        dtype=np.float64,
+                    ).reshape(shape),
+                ),
+            }
+        )
+
+    if result.maneuver_demand is not None:
+        demand = result.maneuver_demand
+        maneuver_target_count = len(demand.events_per_target)
+        if target_count is not None and maneuver_target_count != target_count:
+            raise ValueError("flux and maneuver demand must use the same target count")
+        if target_count is None:
+            target_count = maneuver_target_count
+            coordinates["target"] = np.arange(target_count, dtype=np.int64)
+        coordinates.update(
+            {
+                "maneuver_event": np.arange(len(demand.actionable_encounters), dtype=np.int64),
+                "affected_target": np.arange(len(demand.affected_target_indices), dtype=np.int64),
+            }
+        )
+        variables.update(
+            {
+                "maneuver_trackability_size_threshold_m": (
+                    demand.spec.trackability_size_threshold_m
+                ),
+                "maneuver_miss_distance_threshold_m": demand.spec.miss_distance_threshold_m,
+                "maneuver_duration_s": demand.spec.duration_s,
+                "maneuver_deduplication_tolerance_s": (demand.spec.deduplication_tolerance_s),
+                "maneuver_event_rate_s": demand.event_rate_s,
+                "maneuver_probability_at_least_one": (
+                    demand.probability_at_least_one_actionable_encounter
+                ),
+                "maneuver_events_per_target": (
+                    ("target",),
+                    np.asarray(demand.events_per_target, dtype=np.int64),
+                ),
+                "maneuver_affected_target_index": (
+                    ("affected_target",),
+                    np.asarray(demand.affected_target_indices, dtype=np.int64),
+                ),
+                **_event_variables(
+                    "maneuver",
+                    "maneuver_event",
+                    demand.actionable_encounters,
+                ),
+            }
+        )
+
+    dataset = xr.Dataset(
+        data_vars=variables,
+        coords=coordinates,
+        attrs={"schema": _schema, "title": "ODSS scientific run result"},
+    )
+    _set_units(dataset)
+    dataset["summary_value"].attrs["units"] = "see summary_unit"
+    return dataset
 
 
 def _manifest_from_json(value: str) -> RunManifest:
@@ -333,169 +345,224 @@ def _manifest_from_json(value: str) -> RunManifest:
     )
 
 
-def _event_from_row(row: tuple[object, ...]) -> ConjunctionEvent:
-    return ConjunctionEvent(
-        debris_index=int(row[0]),
-        target_index=int(row[1]),
-        tca_s=float(row[2]),
-        miss_distance_m=float(row[3]),
-        relative_velocity_m_s=float(row[4]),
+def _scalar_string(dataset: xr.Dataset, name: str) -> str:
+    if name not in dataset:
+        raise ValueError(f"stored run result is missing {name}")
+    value = dataset[name].item()
+    if not isinstance(value, str):
+        raise ValueError(f"stored {name} must be a string")
+    return value
+
+
+def _events_from_dataset(
+    dataset: xr.Dataset,
+    prefix: str,
+    dimension: str,
+) -> tuple[ConjunctionEvent, ...]:
+    count = dataset.sizes.get(dimension, 0)
+    names = (
+        f"{prefix}_debris_index",
+        f"{prefix}_target_index",
+        f"{prefix}_tca_s",
+        f"{prefix}_miss_distance_m",
+        f"{prefix}_relative_velocity_m_s",
+    )
+    if any(name not in dataset for name in names):
+        raise ValueError(f"stored run result has incomplete {prefix} event fields")
+    return tuple(
+        ConjunctionEvent(
+            debris_index=int(dataset[names[0]].values[index]),
+            target_index=int(dataset[names[1]].values[index]),
+            tca_s=float(dataset[names[2]].values[index]),
+            miss_distance_m=float(dataset[names[3]].values[index]),
+            relative_velocity_m_s=float(dataset[names[4]].values[index]),
+        )
+        for index in range(count)
     )
 
 
-def read_run_result(database_path: str | Path, identity: ResultIdentity) -> RunResult:
-    """Reconstruct one stored run and its selected scientific outputs."""
-    if not isinstance(identity, ResultIdentity):
-        raise TypeError("identity must be a ResultIdentity")
-    path = Path(database_path)
-    if not path.exists():
-        raise KeyError(f"run result not found: {identity}")
-    keys = _identity_values(identity)
-    with sqlite3.connect(path) as connection:
-        connection.execute("PRAGMA foreign_keys = ON")
-        manifest_row = connection.execute(
-            "SELECT canonical_json FROM manifests WHERE study_id=? AND scenario_id=? AND run_id=?",
-            keys,
-        ).fetchone()
-        if manifest_row is None:
-            raise KeyError(f"run result not found: {identity}")
-        summary = tuple(
-            ScalarRunResult(str(name), float(value), str(unit))
-            for name, value, unit in connection.execute(
-                "SELECT name, value, unit FROM run_summaries "
-                "WHERE study_id=? AND scenario_id=? AND run_id=? ORDER BY name",
-                keys,
-            )
+def _edges_from_dataset(
+    dataset: xr.Dataset,
+    start_name: str,
+    end_name: str,
+) -> tuple[float, ...]:
+    starts = np.asarray(dataset[start_name].values, dtype=np.float64)
+    ends = np.asarray(dataset[end_name].values, dtype=np.float64)
+    if starts.ndim != 1 or ends.ndim != 1 or len(starts) == 0 or len(starts) != len(ends):
+        raise ValueError(f"stored {start_name} and {end_name} must be equal non-empty vectors")
+    if not np.array_equal(starts[1:], ends[:-1]):
+        raise ValueError(f"stored {start_name} and {end_name} must be contiguous")
+    return tuple(float(value) for value in np.concatenate((starts[:1], ends)))
+
+
+def _flux_from_dataset(dataset: xr.Dataset) -> FluxResult | None:
+    if int(dataset["has_flux"].item()) == 0:
+        return None
+    time_edges_s = _edges_from_dataset(dataset, "time_bin_start_s", "time_bin_end_s")
+    size_edges_m = _edges_from_dataset(dataset, "size_bin_min_m", "size_bin_max_m")
+    target_count = dataset.sizes.get("target", 0)
+    time_count = len(time_edges_s) - 1
+    size_count = len(size_edges_m) - 1
+    expected_shape = (target_count, time_count, size_count)
+    names = (
+        "flux_encounter_count",
+        "number_flux_m2_s",
+        "mass_flux_kg_m2_s",
+        "kinetic_energy_flux_w_m2",
+    )
+    if any(name not in dataset or dataset[name].shape != expected_shape for name in names):
+        raise ValueError("stored flux fields do not match target, time, and size dimensions")
+    bins = tuple(
+        FluxBin(
+            target_index=target_index,
+            time_start_s=time_edges_s[time_index],
+            time_end_s=time_edges_s[time_index + 1],
+            size_min_m=size_edges_m[size_index],
+            size_max_m=size_edges_m[size_index + 1],
+            encounter_count=int(
+                dataset["flux_encounter_count"].values[target_index, time_index, size_index]
+            ),
+            number_flux_m2_s=float(
+                dataset["number_flux_m2_s"].values[target_index, time_index, size_index]
+            ),
+            mass_flux_kg_m2_s=float(
+                dataset["mass_flux_kg_m2_s"].values[target_index, time_index, size_index]
+            ),
+            kinetic_energy_flux_w_m2=float(
+                dataset["kinetic_energy_flux_w_m2"].values[target_index, time_index, size_index]
+            ),
         )
-        conjunctions = tuple(
-            _event_from_row(row)
-            for row in connection.execute(
-                "SELECT debris_index, target_index, tca_s, miss_distance_m, "
-                "relative_velocity_m_s FROM conjunctions "
-                "WHERE study_id=? AND scenario_id=? AND run_id=? ORDER BY event_index",
-                keys,
-            )
+        for target_index in range(target_count)
+        for time_index in range(time_count)
+        for size_index in range(size_count)
+    )
+    return FluxResult(
+        spec=FluxSpec(
+            sampling_radius_m=float(dataset["flux_sampling_radius_m"].item()),
+            time_bin_edges_s=time_edges_s,
+            size_bin_edges_m=size_edges_m,
+        ),
+        target_count=target_count,
+        bins=bins,
+    )
+
+
+def _maneuver_from_dataset(dataset: xr.Dataset) -> ManeuverDemandResult | None:
+    if int(dataset["has_maneuver_demand"].item()) == 0:
+        return None
+    return ManeuverDemandResult(
+        spec=ManeuverDemandSpec(
+            trackability_size_threshold_m=float(
+                dataset["maneuver_trackability_size_threshold_m"].item()
+            ),
+            miss_distance_threshold_m=float(dataset["maneuver_miss_distance_threshold_m"].item()),
+            duration_s=float(dataset["maneuver_duration_s"].item()),
+            deduplication_tolerance_s=float(dataset["maneuver_deduplication_tolerance_s"].item()),
+        ),
+        actionable_encounters=_events_from_dataset(dataset, "maneuver", "maneuver_event"),
+        affected_target_indices=tuple(
+            int(value) for value in dataset["maneuver_affected_target_index"].values
+        ),
+        events_per_target=tuple(
+            int(value) for value in dataset["maneuver_events_per_target"].values
+        ),
+        event_rate_s=float(dataset["maneuver_event_rate_s"].item()),
+        probability_at_least_one_actionable_encounter=float(
+            dataset["maneuver_probability_at_least_one"].item()
+        ),
+    )
+
+
+def run_result_from_dataset(dataset: xr.Dataset) -> RunResult:
+    """Reconstruct immutable ODSS result values from one loaded xarray dataset."""
+    if not isinstance(dataset, xr.Dataset):
+        raise TypeError("dataset must be an xarray.Dataset")
+    if dataset.attrs.get("schema") != _schema:
+        raise ValueError("unsupported run-result dataset schema")
+    identity = ResultIdentity(
+        study_id=_scalar_string(dataset, "study_id"),
+        scenario_id=int(_scalar_string(dataset, "scenario_id")),
+        run_id=int(_scalar_string(dataset, "run_id")),
+    )
+    manifest = _manifest_from_json(_scalar_string(dataset, "manifest_json"))
+    summary_count = dataset.sizes.get("summary", 0)
+    summary = tuple(
+        ScalarRunResult(
+            name=str(dataset["summary_name"].values[index]),
+            value=float(dataset["summary_value"].values[index]),
+            unit=str(dataset["summary_unit"].values[index]),
         )
-        flux_spec_row = connection.execute(
-            "SELECT target_count, sampling_radius_m, time_bin_edges_hex, size_bin_edges_hex "
-            "FROM flux_specs WHERE study_id=? AND scenario_id=? AND run_id=?",
-            keys,
-        ).fetchone()
-        flux = None
-        if flux_spec_row is not None:
-            bins = tuple(
-                FluxBin(
-                    target_index=int(row[0]),
-                    time_start_s=float(row[1]),
-                    time_end_s=float(row[2]),
-                    size_min_m=float.fromhex(str(row[3])),
-                    size_max_m=float.fromhex(str(row[4])),
-                    encounter_count=int(row[5]),
-                    number_flux_m2_s=float(row[6]),
-                    mass_flux_kg_m2_s=float(row[7]),
-                    kinetic_energy_flux_w_m2=float(row[8]),
-                )
-                for row in connection.execute(
-                    "SELECT target_index, time_start_s, time_end_s, size_min_hex, size_max_hex, "
-                    "encounter_count, number_flux_m2_s, mass_flux_kg_m2_s, "
-                    "kinetic_energy_flux_w_m2 FROM target_flux "
-                    "WHERE study_id=? AND scenario_id=? AND run_id=? ORDER BY bin_index",
-                    keys,
-                )
-            )
-            flux = FluxResult(
-                spec=FluxSpec(
-                    sampling_radius_m=float(flux_spec_row[1]),
-                    time_bin_edges_s=_decode_float_tuple(str(flux_spec_row[2])),
-                    size_bin_edges_m=_decode_float_tuple(str(flux_spec_row[3])),
-                ),
-                target_count=int(flux_spec_row[0]),
-                bins=bins,
-            )
-        demand_row = connection.execute(
-            "SELECT target_count, trackability_size_threshold_m, miss_distance_threshold_m, "
-            "duration_s, deduplication_tolerance_s, event_rate_s, probability_at_least_one "
-            "FROM maneuver_demand WHERE study_id=? AND scenario_id=? AND run_id=?",
-            keys,
-        ).fetchone()
-        demand = None
-        if demand_row is not None:
-            actionable = tuple(
-                _event_from_row(row)
-                for row in connection.execute(
-                    "SELECT debris_index, target_index, tca_s, miss_distance_m, "
-                    "relative_velocity_m_s FROM maneuver_events "
-                    "WHERE study_id=? AND scenario_id=? AND run_id=? ORDER BY event_index",
-                    keys,
-                )
-            )
-            counts = tuple(
-                int(row[0])
-                for row in connection.execute(
-                    "SELECT event_count FROM maneuver_target_counts "
-                    "WHERE study_id=? AND scenario_id=? AND run_id=? ORDER BY target_index",
-                    keys,
-                )
-            )
-            if len(counts) != int(demand_row[0]):
-                raise ValueError("stored maneuver target counts are incomplete")
-            demand = ManeuverDemandResult(
-                spec=ManeuverDemandSpec(
-                    trackability_size_threshold_m=float(demand_row[1]),
-                    miss_distance_threshold_m=float(demand_row[2]),
-                    duration_s=float(demand_row[3]),
-                    deduplication_tolerance_s=float(demand_row[4]),
-                ),
-                actionable_encounters=actionable,
-                affected_target_indices=tuple(
-                    index for index, count in enumerate(counts) if count > 0
-                ),
-                events_per_target=counts,
-                event_rate_s=float(demand_row[5]),
-                probability_at_least_one_actionable_encounter=float(demand_row[6]),
-            )
+        for index in range(summary_count)
+    )
     result = RunResult(
-        manifest=_manifest_from_json(str(manifest_row[0])),
+        manifest=manifest,
         summary=summary,
-        conjunctions=conjunctions,
-        flux=flux,
-        maneuver_demand=demand,
+        conjunctions=_events_from_dataset(dataset, "conjunction", "conjunction_event"),
+        flux=_flux_from_dataset(dataset),
+        maneuver_demand=_maneuver_from_dataset(dataset),
     )
     if result.identity != identity:
-        raise ValueError("stored manifest does not match its table identity")
+        raise ValueError("stored manifest does not match the dataset identity coordinates")
     return result
 
 
-def list_run_results(database_path: str | Path) -> tuple[ResultIdentity, ...]:
-    """List stored run identities without loading scientific event rows."""
-    path = Path(database_path)
-    if not path.exists():
-        return ()
-    with sqlite3.connect(path) as connection:
-        rows = connection.execute(
-            "SELECT study_id, scenario_id, run_id FROM manifests"
+def _netcdf_encoding(dataset: xr.Dataset) -> dict[str, dict[str, object]]:
+    encoding: dict[str, dict[str, object]] = {}
+    for name, variable in dataset.data_vars.items():
+        if variable.ndim > 0 and variable.size > 0 and variable.dtype.kind in "biufc":
+            encoding[name] = {"zlib": True, "complevel": 4, "shuffle": True}
+    return encoding
+
+
+def write_run_result(path: str | Path, result: RunResult) -> None:
+    """Atomically write one immutable run to a new NetCDF file."""
+    destination = Path(path)
+    if destination.suffix.lower() not in (".nc", ".nc4"):
+        raise ValueError("NetCDF run result path must use a .nc or .nc4 suffix")
+    if not destination.parent.exists():
+        raise FileNotFoundError(f"result directory does not exist: {destination.parent}")
+    if destination.exists():
+        raise FileExistsError(f"run result already exists: {destination}")
+    dataset = run_result_dataset(result)
+    temporary_handle = tempfile.NamedTemporaryFile(
+        dir=destination.parent,
+        prefix=f".{destination.name}.",
+        suffix=".tmp.nc",
+        delete=False,
+    )
+    temporary_path = Path(temporary_handle.name)
+    temporary_handle.close()
+    try:
+        dataset.to_netcdf(
+            temporary_path,
+            engine="netcdf4",
+            format="NETCDF4",
+            encoding=_netcdf_encoding(dataset),
         )
-        identities = tuple(
-            ResultIdentity(str(study), int(scenario), int(run))
-            for study, scenario, run in rows
-        )
-        return tuple(
-            sorted(
-                identities,
-                key=lambda identity: (
-                    identity.study_id,
-                    identity.scenario_id,
-                    identity.run_id,
-                ),
-            )
-        )
+        try:
+            os.link(temporary_path, destination)
+        except FileExistsError as error:
+            raise FileExistsError(f"run result already exists: {destination}") from error
+    finally:
+        temporary_path.unlink(missing_ok=True)
+
+
+def read_run_result(path: str | Path) -> RunResult:
+    """Read one NetCDF run file and reconstruct its immutable ODSS values."""
+    source = Path(path)
+    if not source.exists():
+        raise FileNotFoundError(f"run result does not exist: {source}")
+    with xr.open_dataset(source, engine="netcdf4") as opened:
+        dataset = cast(xr.Dataset, opened.load())
+    return run_result_from_dataset(dataset)
 
 
 __all__ = [
     "ResultIdentity",
     "RunResult",
     "ScalarRunResult",
-    "list_run_results",
     "read_run_result",
+    "run_result_dataset",
+    "run_result_from_dataset",
     "write_run_result",
 ]

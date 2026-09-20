@@ -92,8 +92,9 @@ from .result_store import (
     ResultIdentity,
     RunResult,
     ScalarRunResult,
-    list_run_results,
     read_run_result,
+    run_result_dataset,
+    run_result_from_dataset,
     write_run_result,
 )
 from .rng import (
@@ -203,7 +204,6 @@ __all__ = [
     "fastest_converged_force_model",
     "generate_collision_fragments",
     "generate_explosion_fragments",
-    "list_run_results",
     "named_random_key",
     "named_stream_id",
     "nodal_precession_rate_deg_day",
@@ -211,6 +211,8 @@ __all__ = [
     "odss_software_metadata",
     "random_u64",
     "read_run_result",
+    "run_result_dataset",
+    "run_result_from_dataset",
     "parse_omm_json",
     "propagate_omm_sgp4",
     "propagate",

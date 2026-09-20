@@ -81,9 +81,9 @@ Serial execution is the default. Paired sensitivity variants reuse the same run 
 keys, and the allocation check prevents outer workers from oversubscribing internally threaded
 backends.
 
-Selected event-oriented results can be appended transactionally to SQLite with
-`write_run_result()`. Run summaries, conjunctions, target flux, maneuver demand, and canonical
-manifests share one study/scenario/run identity; internal trajectory steps are not stored by
+Selected event-oriented results can be written as one xarray/NetCDF file per realization with
+`write_run_result()`. Named dimensions and SI units cover run summaries, conjunctions, target
+flux, maneuver demand, and the canonical manifest; internal trajectory steps are not stored by
 default.
 
 Generate the numerical validation report with:

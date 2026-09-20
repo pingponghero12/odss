@@ -1,7 +1,8 @@
 import math
-import sqlite3
+from pathlib import Path
 
 import pytest
+import xarray as xr
 
 import odss
 
@@ -9,7 +10,7 @@ _hash_a = "a" * 64
 _hash_b = "b" * 64
 
 
-def run_result() -> odss.RunResult:
+def _run_result() -> odss.RunResult:
     manifest = odss.RunManifest(
         experiment_hash=_hash_a,
         study_hash=_hash_b,
@@ -24,15 +25,23 @@ def run_result() -> odss.RunResult:
         odss.ConjunctionEvent(1, 1, 8.0, 6.0, 20.0),
     )
     flux = odss.FluxResult(
-        odss.FluxSpec(10.0, (0.0, 10.0), (0.0, math.inf)),
-        2,
-        (
-            odss.FluxBin(0, 0.0, 10.0, 0.0, math.inf, 1, 1.0, 2.0, 3.0),
+        spec=odss.FluxSpec(
+            sampling_radius_m=10.0,
+            time_bin_edges_s=(0.0, 10.0),
+            size_bin_edges_m=(0.0, math.inf),
+        ),
+        target_count=2,
+        bins=(
+            odss.FluxBin(0, 0.0, 10.0, 0.0, math.inf, 1, 0.5, 0.25, 1.0),
             odss.FluxBin(1, 0.0, 10.0, 0.0, math.inf, 0, 0.0, 0.0, 0.0),
         ),
     )
     maneuver = odss.ManeuverDemandResult(
-        spec=odss.ManeuverDemandSpec(0.1, 1_000.0, 10.0),
+        spec=odss.ManeuverDemandSpec(
+            trackability_size_threshold_m=0.1,
+            miss_distance_threshold_m=1_000.0,
+            duration_s=10.0,
+        ),
         actionable_encounters=(events[0],),
         affected_target_indices=(0,),
         events_per_target=(1, 0),
@@ -43,7 +52,7 @@ def run_result() -> odss.RunResult:
         manifest=manifest,
         summary=(
             odss.ScalarRunResult("fragment_count", 2.0, "1"),
-            odss.ScalarRunResult("escaped_fraction", 0.0, "1"),
+            odss.ScalarRunResult("escaped_fraction", 0.25, "1"),
         ),
         conjunctions=events,
         flux=flux,
@@ -51,74 +60,77 @@ def run_result() -> odss.RunResult:
     )
 
 
-def test_event_oriented_result_round_trip(tmp_path: object) -> None:
-    path = tmp_path / "results.sqlite"
-    expected = run_result()
+def test_xarray_dataset_uses_named_scientific_dimensions_and_units() -> None:
+    dataset = odss.run_result_dataset(_run_result())
 
-    odss.write_run_result(path, expected)
-    identities = odss.list_run_results(path)
-    actual = odss.read_run_result(path, identities[0])
-
-    assert identities == (odss.ResultIdentity(_hash_b, 4, 9),)
-    assert actual == expected
-
-
-def test_tables_carry_common_identity_and_no_trajectory_table(tmp_path: object) -> None:
-    path = tmp_path / "results.sqlite"
-    odss.write_run_result(path, run_result())
-
-    with sqlite3.connect(path) as connection:
-        tables = {
-            row[0]
-            for row in connection.execute("SELECT name FROM sqlite_master WHERE type='table'")
-        }
-        for table in (
-            "run_summaries",
-            "conjunctions",
-            "target_flux",
-            "maneuver_demand",
-        ):
-            columns = {row[1] for row in connection.execute(f"PRAGMA table_info({table})")}
-            assert {"study_id", "scenario_id", "run_id"} <= columns
-        assert "trajectories" not in tables
+    assert dataset.attrs["schema"] == "odss.run_result.v1"
+    assert dataset.coords["study_id"].item() == _hash_b
+    assert dataset.coords["scenario_id"].item() == "4"
+    assert dataset.coords["run_id"].item() == "9"
+    assert dataset["number_flux_m2_s"].dims == ("target", "time_bin", "size_bin")
+    assert dataset["number_flux_m2_s"].shape == (2, 1, 1)
+    assert dataset["number_flux_m2_s"].attrs["units"] == "m-2 s-1"
+    assert dataset["conjunction_tca_s"].dims == ("conjunction_event",)
+    assert dataset["maneuver_events_per_target"].dims == ("target",)
+    assert not any("trajectory" in name for name in dataset.variables)
 
 
-def test_duplicate_identity_is_not_silently_overwritten(tmp_path: object) -> None:
-    path = tmp_path / "results.sqlite"
-    expected = run_result()
-    odss.write_run_result(path, expected)
-
-    with pytest.raises(ValueError, match="already exists"):
-        odss.write_run_result(path, expected)
-
-    assert odss.read_run_result(path, expected.identity) == expected
-
-
-def test_empty_selected_outputs_round_trip_and_missing_run(tmp_path: object) -> None:
-    path = tmp_path / "results.sqlite"
-    manifest = odss.RunManifest(_hash_a, 1, 2, 3)
-    expected = odss.RunResult(manifest)
+def test_netcdf_run_result_round_trip(tmp_path: Path) -> None:
+    expected = _run_result()
+    path = tmp_path / "run_000009.nc"
 
     odss.write_run_result(path, expected)
 
-    assert odss.read_run_result(path, expected.identity) == expected
-    with pytest.raises(KeyError, match="not found"):
-        odss.read_run_result(path, odss.ResultIdentity(_hash_a, 2, 4))
-
-    missing_path = tmp_path / "missing.sqlite"
-    with pytest.raises(KeyError, match="not found"):
-        odss.read_run_result(missing_path, expected.identity)
-    assert not missing_path.exists()
+    assert odss.read_run_result(path) == expected
+    with xr.open_dataset(path, engine="netcdf4") as dataset:
+        assert dataset.attrs["schema"] == "odss.run_result.v1"
+        assert dataset["manifest_json"].item() == odss.canonical_manifest(expected.manifest)
+        assert dataset["kinetic_energy_flux_w_m2"].attrs["units"] == "W m-2"
 
 
-def test_result_values_are_validated() -> None:
+def test_existing_run_file_is_not_silently_overwritten(tmp_path: Path) -> None:
+    result = _run_result()
+    path = tmp_path / "run_000009.nc"
+    odss.write_run_result(path, result)
+
+    with pytest.raises(FileExistsError):
+        odss.write_run_result(path, result)
+
+    assert odss.read_run_result(path) == result
+
+
+def test_empty_selected_outputs_round_trip(tmp_path: Path) -> None:
+    expected = odss.RunResult(manifest=_run_result().manifest)
+    path = tmp_path / "run_000009.nc"
+
+    odss.write_run_result(path, expected)
+
+    assert odss.read_run_result(path) == expected
+    with xr.open_dataset(path, engine="netcdf4") as dataset:
+        assert dataset.sizes["summary"] == 0
+        assert dataset.sizes["conjunction_event"] == 0
+        assert dataset["has_flux"].item() == 0
+
+
+def test_dataset_identity_must_match_canonical_manifest() -> None:
+    dataset = odss.run_result_dataset(_run_result()).assign_coords(run_id="10")
+
+    with pytest.raises(ValueError, match="does not match"):
+        odss.run_result_from_dataset(dataset)
+
+
+def test_result_storage_inputs_are_validated(tmp_path: Path) -> None:
     with pytest.raises(ValueError, match="finite"):
-        odss.ScalarRunResult("flux", math.inf, "m^-2 s^-1")
+        odss.ScalarRunResult("invalid", math.inf, "1")
     with pytest.raises(ValueError, match="unique"):
         odss.RunResult(
-            odss.RunManifest(_hash_a, 1, 2, 3),
+            manifest=_run_result().manifest,
             summary=(
-                odss.ScalarRunResult("count", 1.0, "1"),
-                odss.ScalarRunResult("count", 2.0, "1"),
+                odss.ScalarRunResult("same", 1.0, "1"),
+                odss.ScalarRunResult("same", 2.0, "1"),
             ),
         )
+    with pytest.raises(ValueError, match="NetCDF"):
+        odss.write_run_result(tmp_path / "result.db", _run_result())
+    with pytest.raises(FileNotFoundError):
+        odss.read_run_result(tmp_path / "missing.nc")
