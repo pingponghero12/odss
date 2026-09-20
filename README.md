@@ -63,6 +63,35 @@ The same address always produces the same value, independent of thread schedulin
 `RunManifest` records the master seed, scenario ID, run ID, and RNG algorithm needed to identify
 the run's stochastic inputs.
 
+Independent realizations can be executed serially or across explicitly budgeted worker processes:
+
+```python
+spec = odss.MonteCarloSpec(
+    master_seed=2026,
+    scenario_id=0,
+    run_ids=tuple(range(250)),
+    max_workers=8,
+    backend_threads_per_worker=1,
+    cpu_budget=32,
+)
+outcomes = odss.execute_monte_carlo(run_one_realization, spec)
+```
+
+Serial execution is the default. Paired sensitivity variants reuse the same run IDs and random
+keys, and the allocation check prevents outer workers from oversubscribing internally threaded
+backends.
+
+Selected event-oriented results can be written as one xarray/NetCDF file per realization with
+`write_run_result()`. Named dimensions and SI units cover run summaries, conjunctions, target
+flux, maneuver demand, and the canonical manifest; internal trajectory steps are not stored by
+default.
+
+Generate the numerical validation report with:
+
+```bash
+odss-validate --output validation.json
+```
+
 ## Time and coordinate frames
 
 Time conversion supports explicit UTC, TAI, and TT epochs, including UTC leap seconds. Cartesian

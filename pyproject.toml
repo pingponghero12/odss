@@ -17,7 +17,16 @@ classifiers = [
   "Programming Language :: Python :: 3.12",
   "Programming Language :: C++"
 ]
-dependencies = ["astropy>=6.1", "numpy>=1.24", "sgp4>=2.25"]
+dependencies = [
+  "astropy>=6.1",
+  "netCDF4>=1.7",
+  "numpy>=1.24",
+  "sgp4>=2.25",
+  "xarray>=2024.6",
+]
+
+[project.scripts]
+odss-validate = "odss.validation:main"
 
 [tool.scikit-build]
 cmake.args = ["-DBUILD_TESTING=OFF"]
