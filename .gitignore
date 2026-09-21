@@ -133,6 +133,9 @@ CONTEXT.md
 docs/pr/
 ROADMAP.md
 
+# Generated scientific campaigns are published separately from source code
+/results/
+
 # pixi
 #   Similar to Pipfile.lock, it is generally recommended to include pixi.lock in version control.
 # pixi.lock

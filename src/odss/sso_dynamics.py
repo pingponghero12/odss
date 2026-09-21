@@ -9,6 +9,8 @@ from dataclasses import dataclass
 import numpy as np
 
 from ._core import ParticlePopulation
+from .cascade_screening import _combined_state, _event_from_cascade
+from .conjunction import ConjunctionEvent, _require_screening_inputs
 from .coordinates import elapsed_time_s, epoch_from_iso
 from .propagation import (
     _cascade_state,
@@ -66,6 +68,7 @@ class SsoPropagationSpec:
     force_model: SsoForceModelSpec
     tolerance: float | None = None
     high_accuracy: bool = False
+    collisional_steps_per_batch: int = 1
 
     def __post_init__(self) -> None:
         for value, name in (
@@ -85,6 +88,12 @@ class SsoPropagationSpec:
                 raise ValueError("tolerance must be positive and finite")
         if not isinstance(self.high_accuracy, bool):
             raise TypeError("high_accuracy must be a bool")
+        if (
+            isinstance(self.collisional_steps_per_batch, bool)
+            or not isinstance(self.collisional_steps_per_batch, int)
+            or self.collisional_steps_per_batch <= 0
+        ):
+            raise ValueError("collisional_steps_per_batch must be a positive integer")
 
 
 @dataclass(frozen=True, slots=True)
@@ -96,6 +105,24 @@ class ForceModelSensitivity:
     maximum_position_difference_m: float
     rms_position_difference_m: float
     maximum_velocity_difference_m_s: float
+
+
+@dataclass(frozen=True, slots=True)
+class SsoScreeningResult:
+    """Final populations and continuous debris-target conjunction events."""
+
+    final_debris: ParticlePopulation
+    final_targets: ParticlePopulation
+    conjunctions: tuple[ConjunctionEvent, ...]
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.final_debris, ParticlePopulation):
+            raise TypeError("final_debris must be a ParticlePopulation")
+        if not isinstance(self.final_targets, ParticlePopulation):
+            raise TypeError("final_targets must be a ParticlePopulation")
+        object.__setattr__(self, "conjunctions", tuple(self.conjunctions))
+        if any(not isinstance(event, ConjunctionEvent) for event in self.conjunctions):
+            raise TypeError("conjunctions must contain only ConjunctionEvent values")
 
 
 def _particle_parameters(
@@ -146,6 +173,7 @@ def propagate_sso(
         ),
         "high_accuracy": spec.high_accuracy,
         "min_coll_radius": math.inf,
+        "n_par_ct": spec.collisional_steps_per_batch,
     }
     parameters = _particle_parameters(population, force_model)
     if parameters is not None:
@@ -167,6 +195,119 @@ def propagate_sso(
         population,
         np.asarray(simulation.state, dtype=np.float64),
         spec.duration_s,
+    )
+
+
+def _combined_population(
+    debris: ParticlePopulation,
+    targets: ParticlePopulation,
+) -> ParticlePopulation:
+    def values(name: str) -> tuple[float, ...]:
+        return tuple(getattr(debris, name)) + tuple(getattr(targets, name))
+
+    return ParticlePopulation(
+        epoch=debris.epoch,
+        frame=debris.frame,
+        position_x_m=values("position_x_m"),
+        position_y_m=values("position_y_m"),
+        position_z_m=values("position_z_m"),
+        velocity_x_m_s=values("velocity_x_m_s"),
+        velocity_y_m_s=values("velocity_y_m_s"),
+        velocity_z_m_s=values("velocity_z_m_s"),
+        mass_kg=values("mass_kg"),
+        area_m2=values("area_m2"),
+    )
+
+
+def propagate_and_screen_sso(
+    debris: ParticlePopulation,
+    targets: ParticlePopulation,
+    spec: SsoPropagationSpec,
+    *,
+    threshold_m: float,
+) -> SsoScreeningResult:
+    """Propagate both roles with one SSO model and continuously screen cross-role events."""
+    if not isinstance(spec, SsoPropagationSpec):
+        raise TypeError("spec must be an SsoPropagationSpec")
+    _require_screening_inputs(debris, targets, spec.duration_s, threshold_m)
+    if debris.frame.identifier != "EME2000":
+        raise ValueError("SSO dynamics requires EME2000 particle states")
+    if debris.empty or targets.empty:
+        return SsoScreeningResult(
+            final_debris=propagate_sso(debris, spec),
+            final_targets=propagate_sso(targets, spec),
+            conjunctions=(),
+        )
+
+    cascade = _load_cascade()
+    force_model = spec.force_model
+    combined = _combined_population(debris, targets)
+    arguments: dict[str, object] = {
+        "dyn": cascade.dynamics.simple_earth(
+            J2=force_model.j2,
+            J3=force_model.j3,
+            J4=False,
+            C22S22=force_model.c22_s22,
+            drag=force_model.drag,
+            sun=force_model.sun,
+            moon=force_model.moon,
+            SRP=force_model.srp,
+        ),
+        "high_accuracy": spec.high_accuracy,
+        "min_coll_radius": math.inf,
+        "n_par_ct": spec.collisional_steps_per_batch,
+        "conj_thresh": np.nextafter(float(threshold_m), math.inf),
+    }
+    debris_count = len(debris)
+    target_count = len(targets)
+    if debris_count <= target_count:
+        arguments["conj_whitelist"] = set(range(debris_count))
+    else:
+        arguments["conj_whitelist"] = set(range(debris_count, debris_count + target_count))
+    parameters = _particle_parameters(combined, force_model)
+    if parameters is not None:
+        arguments["pars"] = parameters
+    if spec.tolerance is not None:
+        arguments["tol"] = spec.tolerance
+
+    simulation = cascade.sim(
+        _combined_state(debris, targets),
+        spec.collisional_timestep_s,
+        **arguments,
+    )
+    start_time_s = elapsed_time_s(_j2000_tt, debris.epoch)
+    simulation.time = start_time_s
+    outcome = simulation.propagate_until(start_time_s + spec.duration_s)
+    if outcome != cascade.outcome.time_limit:
+        raise RuntimeError(f"Cascade SSO propagation stopped before the requested epoch: {outcome}")
+
+    events = []
+    for backend_event in simulation.conjunctions:
+        event = _event_from_cascade(backend_event, debris_count)
+        if event is not None:
+            events.append(
+                ConjunctionEvent(
+                    debris_index=event.debris_index,
+                    target_index=event.target_index,
+                    tca_s=event.tca_s - start_time_s,
+                    miss_distance_m=event.miss_distance_m,
+                    relative_velocity_m_s=event.relative_velocity_m_s,
+                )
+            )
+    events.sort(key=lambda event: (event.tca_s, event.debris_index, event.target_index))
+    final_state = np.asarray(simulation.state, dtype=np.float64)
+    return SsoScreeningResult(
+        final_debris=_population_from_cascade_state(
+            debris,
+            final_state[:debris_count],
+            spec.duration_s,
+        ),
+        final_targets=_population_from_cascade_state(
+            targets,
+            final_state[debris_count:],
+            spec.duration_s,
+        ),
+        conjunctions=tuple(events),
     )
 
 
@@ -235,9 +376,7 @@ def evaluate_force_model_sensitivity(
                     if len(position_difference_m)
                     else 0.0
                 ),
-                maximum_velocity_difference_m_s=float(
-                    np.max(velocity_difference_m_s, initial=0.0)
-                ),
+                maximum_velocity_difference_m_s=float(np.max(velocity_difference_m_s, initial=0.0)),
             )
         )
     return tuple(results)
@@ -265,7 +404,9 @@ __all__ = [
     "ForceModelSensitivity",
     "SsoForceModelSpec",
     "SsoPropagationSpec",
+    "SsoScreeningResult",
     "evaluate_force_model_sensitivity",
     "fastest_converged_force_model",
+    "propagate_and_screen_sso",
     "propagate_sso",
 ]
