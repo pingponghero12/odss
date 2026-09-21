@@ -16,6 +16,7 @@ from astropy.coordinates import (
     BaseCoordinateFrame,
     CartesianDifferential,
     CartesianRepresentation,
+    PrecessedGeocentric,
 )
 from astropy.time import Time, TimeDelta
 from astropy.utils import iers
@@ -24,7 +25,8 @@ from ._core import CartesianState, Epoch, ReferenceFrame
 from .provenance import InputAssetMetadata
 
 _supported_time_scales = frozenset({"TAI", "TT", "UTC"})
-_supported_frames = frozenset({"GCRS", "ITRS", "TEME"})
+_supported_frames = frozenset({"EME2000", "GCRS", "ITRS", "TEME"})
+_j2000 = Time("J2000", scale="tt")
 
 
 def _normalize_time_scale(time_scale: str) -> str:
@@ -129,6 +131,8 @@ def _frame(
         return TEME(representation, obstime=obstime)
     if identifier == "GCRS":
         return GCRS(representation, obstime=obstime)
+    if identifier == "EME2000":
+        return PrecessedGeocentric(representation, equinox=_j2000, obstime=obstime)
     if identifier == "ITRS":
         return ITRS(representation, obstime=obstime)
     raise ValueError(f"unsupported reference frame: {identifier}")
@@ -139,6 +143,8 @@ def _empty_frame(identifier: str, obstime: Time) -> BaseCoordinateFrame:
         return TEME(obstime=obstime)
     if identifier == "GCRS":
         return GCRS(obstime=obstime)
+    if identifier == "EME2000":
+        return PrecessedGeocentric(equinox=_j2000, obstime=obstime)
     if identifier == "ITRS":
         return ITRS(obstime=obstime)
     raise ValueError(f"unsupported reference frame: {identifier}")
@@ -149,7 +155,7 @@ def transform_state(
     target_frame: ReferenceFrame,
     earth_orientation: EarthOrientationData,
 ) -> CartesianState:
-    """Explicitly transform a Cartesian state between TEME, GCRS, and ITRS."""
+    """Explicitly transform a Cartesian state among supported Earth-centered frames."""
     if not isinstance(state, CartesianState):
         raise TypeError("state must be a CartesianState")
     if not isinstance(target_frame, ReferenceFrame):

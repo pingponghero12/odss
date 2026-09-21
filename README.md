@@ -95,7 +95,7 @@ odss-validate --output validation.json
 ## Time and coordinate frames
 
 Time conversion supports explicit UTC, TAI, and TT epochs, including UTC leap seconds. Cartesian
-states can be explicitly transformed among TEME, GCRS, and ITRS using Astropy/ERFA:
+states can be explicitly transformed among TEME, EME2000, GCRS, and ITRS using Astropy/ERFA:
 
 ```python
 earth_orientation = odss.bundled_iers_a()

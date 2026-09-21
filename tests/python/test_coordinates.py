@@ -103,6 +103,27 @@ def test_teme_gcrs_round_trip_preserves_state(
     assert round_trip.velocity_m_s == pytest.approx(original.velocity_m_s, abs=1e-6)
 
 
+def test_teme_eme2000_round_trip_preserves_state(
+    earth_orientation: odss.EarthOrientationData,
+) -> None:
+    original = satellite_teme_state()
+    eme2000 = odss.transform_state(
+        original,
+        odss.ReferenceFrame("EME2000"),
+        earth_orientation,
+    )
+    round_trip = odss.transform_state(
+        eme2000,
+        odss.ReferenceFrame("TEME"),
+        earth_orientation,
+    )
+
+    assert eme2000.frame == odss.ReferenceFrame("EME2000")
+    assert eme2000.epoch == original.epoch
+    assert round_trip.position_m == pytest.approx(original.position_m, abs=1e-3)
+    assert round_trip.velocity_m_s == pytest.approx(original.velocity_m_s, abs=1e-6)
+
+
 def test_frame_transform_requires_supported_explicit_frames(
     earth_orientation: odss.EarthOrientationData,
 ) -> None:

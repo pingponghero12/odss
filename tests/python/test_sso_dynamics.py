@@ -38,6 +38,7 @@ class FakeSimulation:
     def __init__(self, state: np.ndarray, timestep_s: float, **arguments: object) -> None:
         self.state = np.array(state, copy=True)
         self.time = 0.0
+        self.conjunctions: tuple[dict[str, object], ...] = ()
         FakeSimulation.last_call = (self.state, timestep_s, arguments)
 
     def propagate_until(self, final_time_s: float) -> str:
@@ -94,13 +95,11 @@ def test_sso_adapter_configures_dynamics_epoch_and_particle_parameters(
     assert timestep_s == 10.0
     assert arguments["dyn"] == "earth_dynamics"
     assert arguments["min_coll_radius"] == math.inf
+    assert arguments["n_par_ct"] == 1
     assert arguments["tol"] == 1.0e-12
     parameters = np.asarray(arguments["pars"])
     expected_area_to_mass = np.array((0.02, 0.04))
-    expected_bstar = (
-        expected_area_to_mass
-        * sso_dynamics._cascade_drag_reference_density_kg_m3
-    )
+    expected_bstar = expected_area_to_mass * sso_dynamics._cascade_drag_reference_density_kg_m3
     assert parameters[:, 0] == pytest.approx(expected_bstar)
     assert parameters[:, 1] == pytest.approx(1.5 * expected_area_to_mass)
 
@@ -113,6 +112,58 @@ def test_sso_adapter_requires_explicit_eme2000_frame() -> None:
         )
 
 
+def test_combined_sso_propagation_screens_only_debris_target_pairs(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    start_time_s = sso_dynamics.elapsed_time_s(
+        sso_dynamics._j2000_tt,
+        population(count=1).epoch,
+    )
+
+    class ScreeningSimulation(FakeSimulation):
+        def __init__(self, state: np.ndarray, timestep_s: float, **arguments: object) -> None:
+            super().__init__(state, timestep_s, **arguments)
+            self.conjunctions = (
+                {
+                    "i": 0,
+                    "j": 1,
+                    "time": start_time_s + 30.0,
+                    "dist": 250.0,
+                    "state_i": (0.0, 0.0, 0.0, 1.0, 0.0, 0.0),
+                    "state_j": (0.0, 0.0, 0.0, -1.0, 0.0, 0.0),
+                },
+            )
+
+    backend = fake_cascade()
+    backend.sim = ScreeningSimulation
+    monkeypatch.setattr(sso_dynamics, "_load_cascade", lambda: backend)
+    debris = population(count=1)
+    targets = population(count=2)
+
+    result = odss.propagate_and_screen_sso(
+        debris,
+        targets,
+        odss.SsoPropagationSpec(
+            duration_s=60.0,
+            collisional_timestep_s=10.0,
+            force_model=odss.SsoForceModelSpec(j2=True, drag=True),
+            collisional_steps_per_batch=120,
+        ),
+        threshold_m=1_000.0,
+    )
+
+    assert len(result.final_debris) == 1
+    assert len(result.final_targets) == 2
+    assert result.final_debris.epoch.offset_s == debris.epoch.offset_s + 60.0
+    assert result.conjunctions == (odss.ConjunctionEvent(0, 0, 30.0, 250.0, 2.0),)
+    assert ScreeningSimulation.last_call is not None
+    _, _, arguments = ScreeningSimulation.last_call
+    assert arguments["conj_whitelist"] == {0}
+    assert arguments["conj_thresh"] > 1_000.0
+    assert arguments["n_par_ct"] == 120
+    assert np.asarray(arguments["pars"]).shape == (3, 1)
+
+
 def test_force_model_and_propagation_specs_validate_values() -> None:
     with pytest.raises(TypeError, match="j2"):
         odss.SsoForceModelSpec(j2=1)
@@ -122,6 +173,13 @@ def test_force_model_and_propagation_specs_validate_values() -> None:
         odss.SsoPropagationSpec(0.0, 1.0, odss.SsoForceModelSpec())
     with pytest.raises(TypeError, match="force_model"):
         odss.SsoPropagationSpec(1.0, 1.0, "j2")
+    with pytest.raises(ValueError, match="collisional_steps_per_batch"):
+        odss.SsoPropagationSpec(
+            1.0,
+            1.0,
+            odss.SsoForceModelSpec(),
+            collisional_steps_per_batch=0,
+        )
 
 
 def test_sensitivity_and_fastest_converged_selection(monkeypatch: pytest.MonkeyPatch) -> None:

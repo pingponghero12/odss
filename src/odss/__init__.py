@@ -115,8 +115,10 @@ from .sso_dynamics import (
     ForceModelSensitivity,
     SsoForceModelSpec,
     SsoPropagationSpec,
+    SsoScreeningResult,
     evaluate_force_model_sensitivity,
     fastest_converged_force_model,
+    propagate_and_screen_sso,
     propagate_sso,
 )
 from .validation import (
@@ -178,6 +180,7 @@ __all__ = [
     "Sgp4PropagationSpec",
     "SsoForceModelSpec",
     "SsoPropagationSpec",
+    "SsoScreeningResult",
     "ValidationCase",
     "ValidationMetric",
     "ValidationReport",
@@ -216,6 +219,7 @@ __all__ = [
     "parse_omm_json",
     "propagate_omm_sgp4",
     "propagate",
+    "propagate_and_screen_sso",
     "propagate_sso",
     "paired_sensitivity",
     "required_mean_runs",
