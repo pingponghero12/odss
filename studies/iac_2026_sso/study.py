@@ -4,11 +4,10 @@ from __future__ import annotations
 
 import math
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Literal
 
 import odss
-
-XX = "XX"
 
 _day_s = 86_400.0
 _sun_mean_rate_deg_day = 360.0 / 365.242_189_7
@@ -23,11 +22,7 @@ MANEUVER_DISTANCE_THRESHOLDS_M = (500.0, 1_000.0, 2_000.0, 5_000.0)
 TRACKABILITY_SIZE_THRESHOLD_M = 0.10
 REFERENCE_AREAS_M2 = (1.0, 5.0, 10.0, 20.0)
 
-CATALOG_PATH = XX
-CATALOG_SOURCE_URI = XX
-CATALOG_ACQUIRED_AT_UTC = XX
-COMMON_EPOCH_UTC = XX
-CODE_VERSION = XX
+CATALOG_SNAPSHOT_PATH = Path("results/iac_2026_sso/input/catalog_snapshot.json")
 
 
 @dataclass(frozen=True, slots=True)
@@ -127,6 +122,18 @@ PRELIMINARY_CAMPAIGN = Campaign(
     wall_time_budget_s=3_600.0,
 )
 
+SMOKE_CAMPAIGN = Campaign(
+    name="smoke",
+    duration_s=600.0,
+    time_bin_edges_s=(0.0, 600.0),
+    screening_threshold_m=10_000.0,
+    stored_flux_radius_m=5_000.0,
+    default_runs_per_family=1,
+    maximum_runs_per_family=1,
+    maximum_workers=1,
+    wall_time_budget_s=600.0,
+)
+
 PRODUCTION_CAMPAIGN = Campaign(
     name="production",
     duration_s=365.25 * _day_s,
@@ -171,13 +178,9 @@ def family_count() -> int:
 
 __all__ = [
     "ANALYSIS_SIZE_THRESHOLDS_M",
-    "CATALOG_ACQUIRED_AT_UTC",
-    "CATALOG_PATH",
-    "CATALOG_SOURCE_URI",
-    "CODE_VERSION",
+    "CATALOG_SNAPSHOT_PATH",
     "COLLISIONAL_TIMESTEP_S",
     "COLLISIONAL_STEPS_PER_BATCH",
-    "COMMON_EPOCH_UTC",
     "Campaign",
     "FLUX_RADII_M",
     "FLUX_SIZE_BIN_EDGES_M",
@@ -191,12 +194,12 @@ __all__ = [
     "PRODUCTION_CAMPAIGN",
     "REFERENCE_AREAS_M2",
     "SCENARIOS",
+    "SMOKE_CAMPAIGN",
     "SSO_PRECESSION_TOLERANCE_DEG_DAY",
     "Scenario",
     "TARGET_PROXY_AREA_M2",
     "TARGET_PROXY_MASS_KG",
     "TRACKABILITY_SIZE_THRESHOLD_M",
-    "XX",
     "family_count",
     "variants_for",
 ]

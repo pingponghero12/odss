@@ -10,7 +10,9 @@ import json
 import math
 import multiprocessing
 import os
+import platform
 import statistics
+import subprocess
 import time
 from collections.abc import Sequence
 from concurrent.futures import ProcessPoolExecutor
@@ -20,6 +22,7 @@ from pathlib import Path
 import odss
 
 from . import study
+from .inputs import acquire_catalog_snapshot, load_catalog_snapshot
 
 _earth_gravitational_parameter_m3_s2 = 3.986_004_418e14
 _earth_radius_m = 6_378_136.3
@@ -35,6 +38,7 @@ class ExecutionInputs:
     catalog_acquired_at_utc: str
     common_epoch_utc: str
     code_version: str
+    catalog_provenance_paths: tuple[Path, ...]
     output_directory: Path
     workers: int
     resume: bool
@@ -115,21 +119,18 @@ def _asset_for_file(path: Path, logical_name: str) -> odss.InputAssetMetadata:
 
 
 def _require_resolved_inputs(inputs: ExecutionInputs) -> None:
-    unresolved = tuple(
-        name
-        for name, value in (
-            ("catalog", str(inputs.catalog_path)),
-            ("catalog source URI", inputs.catalog_source_uri),
-            ("catalog acquisition epoch", inputs.catalog_acquired_at_utc),
-            ("common simulation epoch", inputs.common_epoch_utc),
-            ("code version", inputs.code_version),
-        )
-        if value == study.XX
-    )
-    if unresolved:
-        raise ValueError("replace XX for: " + ", ".join(unresolved))
     if not inputs.catalog_path.is_file():
         raise FileNotFoundError(f"catalog does not exist: {inputs.catalog_path}")
+    if any(not path.is_file() for path in inputs.catalog_provenance_paths):
+        raise FileNotFoundError("one or more catalog provenance assets do not exist")
+    for value, name in (
+        (inputs.catalog_source_uri, "catalog source URI"),
+        (inputs.catalog_acquired_at_utc, "catalog acquisition epoch"),
+        (inputs.common_epoch_utc, "common simulation epoch"),
+        (inputs.code_version, "code version"),
+    ):
+        if not isinstance(value, str) or not value.strip():
+            raise ValueError(f"{name} must not be empty")
     if inputs.workers <= 0:
         raise ValueError("workers must be positive")
 
@@ -173,9 +174,14 @@ def _prepare_inputs(inputs: ExecutionInputs) -> PreparedInputs:
     )
     study_directory = Path(__file__).resolve().parent
     assets = tuple(acquisition.asset for acquisition in catalog.acquisitions) + (
+        *(
+            _asset_for_file(path, f"catalog_snapshot/{path.name}")
+            for path in inputs.catalog_provenance_paths
+        ),
         earth_orientation.metadata,
         _asset_for_file(study_directory / "study.py", "iac_2026_sso/study.py"),
         _asset_for_file(study_directory / "campaign.py", "iac_2026_sso/campaign.py"),
+        _asset_for_file(study_directory / "inputs.py", "iac_2026_sso/inputs.py"),
     )
     study_identity = {
         "analysis_size_thresholds_m": study.ANALYSIS_SIZE_THRESHOLDS_M,
@@ -373,8 +379,15 @@ def _run_manifest(
         software=(
             odss.odss_software_metadata(),
             odss.SoftwareMetadata("odss_git", prepared.code_version),
+            odss.SoftwareMetadata("python", platform.python_version()),
+            odss.SoftwareMetadata("numpy", _package_version("numpy", "numpy")),
+            odss.SoftwareMetadata("astropy", _package_version("astropy", "astropy")),
+            odss.SoftwareMetadata("sgp4", _package_version("sgp4", "sgp4")),
             odss.SoftwareMetadata("cascade", _package_version("esa-cascade", "cascade")),
+            odss.SoftwareMetadata("heyoka", _package_version("heyoka", "heyoka")),
             odss.SoftwareMetadata("nasa-sbm-py", _package_version("nasa-sbm-py", "nasa_sbm")),
+            odss.SoftwareMetadata("xarray", _package_version("xarray", "xarray")),
+            odss.SoftwareMetadata("netCDF4", _package_version("netCDF4", "netCDF4")),
         ),
     )
 
@@ -639,6 +652,7 @@ def _tasks(
     campaign: study.Campaign,
     output_directory: Path,
     runs_per_family: int,
+    families: Sequence[tuple[study.Scenario, study.ModelVariant]],
 ) -> tuple[StudyTask, ...]:
     return tuple(
         StudyTask(
@@ -648,8 +662,7 @@ def _tasks(
             run_id=run_id,
             output_path=_result_path(output_directory, scenario, variant, run_id),
         )
-        for scenario in study.SCENARIOS
-        for variant in study.variants_for(scenario)
+        for scenario, variant in families
         for run_id in range(runs_per_family)
     )
 
@@ -659,15 +672,17 @@ def _plan(
     runs_per_family: int,
     workers: int,
     wall_time_budget_s: float,
+    families: Sequence[tuple[study.Scenario, study.ModelVariant]] | None = None,
 ) -> dict[str, object]:
+    selected_families = tuple(_study_families() if families is None else families)
     return {
         "campaign": campaign.name,
         "duration_s": campaign.duration_s,
-        "expected_result_files": study.family_count() * runs_per_family,
-        "families": study.family_count(),
+        "expected_result_files": len(selected_families) * runs_per_family,
+        "families": len(selected_families),
         "maximum_workers": workers,
         "runs_per_family": runs_per_family,
-        "scenario_names": tuple(scenario.name for scenario in study.SCENARIOS),
+        "scenario_names": tuple(dict.fromkeys(scenario.name for scenario, _ in selected_families)),
         "schema": "odss.sso_campaign_plan.v1",
         "wall_time_budget_s": wall_time_budget_s,
     }
@@ -677,12 +692,21 @@ def _write_json(path: Path, value: object) -> None:
     path.write_text(json.dumps(_canonical_value(value), indent=2, sort_keys=True) + "\n")
 
 
+def _study_families() -> tuple[tuple[study.Scenario, study.ModelVariant], ...]:
+    return tuple(
+        (scenario, variant)
+        for scenario in study.SCENARIOS
+        for variant in study.variants_for(scenario)
+    )
+
+
 def _execute_campaign(
     campaign: study.Campaign,
     inputs: ExecutionInputs,
     *,
     runs_per_family: int,
     wall_time_budget_s: float,
+    families: Sequence[tuple[study.Scenario, study.ModelVariant]] | None = None,
 ) -> int:
     global _prepared_inputs
     _require_resolved_inputs(inputs)
@@ -706,8 +730,11 @@ def _execute_campaign(
             "scientific validation must pass without skipped optional backends before execution"
         )
 
+    selected_families = tuple(_study_families() if families is None else families)
+    if not selected_families:
+        raise ValueError("at least one scenario/model family is required")
     _prepared_inputs = _prepare_inputs(inputs)
-    all_tasks = _tasks(campaign, output_directory, runs_per_family)
+    all_tasks = _tasks(campaign, output_directory, runs_per_family, selected_families)
     for task in all_tasks:
         task.output_path.parent.mkdir(parents=True, exist_ok=True)
     existing = tuple(task for task in all_tasks if task.output_path.exists())
@@ -716,7 +743,13 @@ def _execute_campaign(
     for task in existing:
         _require_matching_existing_result(task, _prepared_inputs)
     pending = tuple(task for task in all_tasks if not task.output_path.exists())
-    plan = _plan(campaign, runs_per_family, inputs.workers, wall_time_budget_s)
+    plan = _plan(
+        campaign,
+        runs_per_family,
+        inputs.workers,
+        wall_time_budget_s,
+        selected_families,
+    )
     campaign_manifest = {
         **plan,
         "catalog_path": str(inputs.catalog_path),
@@ -817,11 +850,13 @@ def _common_parser(campaign: study.Campaign) -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         description=f"Run the {campaign.name} SSO fragmentation campaign."
     )
-    parser.add_argument("--catalog", type=Path, default=Path(study.CATALOG_PATH))
-    parser.add_argument("--catalog-source-uri", default=study.CATALOG_SOURCE_URI)
-    parser.add_argument("--catalog-acquired-at", default=study.CATALOG_ACQUIRED_AT_UTC)
-    parser.add_argument("--epoch", default=study.COMMON_EPOCH_UTC)
-    parser.add_argument("--code-version", default=study.CODE_VERSION)
+    parser.add_argument(
+        "--catalog-snapshot",
+        type=Path,
+        default=study.CATALOG_SNAPSHOT_PATH,
+    )
+    parser.add_argument("--epoch")
+    parser.add_argument("--code-version")
     parser.add_argument(
         "--output",
         type=Path,
@@ -838,13 +873,43 @@ def _common_parser(campaign: study.Campaign) -> argparse.ArgumentParser:
     return parser
 
 
+def _repository_code_version() -> str:
+    try:
+        code_version = subprocess.run(
+            ("git", "rev-parse", "HEAD"),
+            check=True,
+            capture_output=True,
+            text=True,
+        ).stdout.strip()
+        dirty = subprocess.run(
+            ("git", "status", "--porcelain", "--untracked-files=no"),
+            check=True,
+            capture_output=True,
+            text=True,
+        ).stdout.strip()
+    except (FileNotFoundError, subprocess.CalledProcessError) as error:
+        raise RuntimeError("provide --code-version outside a Git checkout") from error
+    if dirty:
+        raise RuntimeError("commit tracked changes before a scientific run")
+    return code_version
+
+
 def _execution_inputs(arguments: argparse.Namespace) -> ExecutionInputs:
+    snapshot_path = Path(arguments.catalog_snapshot)
+    if snapshot_path.name != "catalog_snapshot.json":
+        raise ValueError("--catalog-snapshot must end in catalog_snapshot.json")
+    snapshot = (
+        load_catalog_snapshot(snapshot_path)
+        if snapshot_path.is_file()
+        else acquire_catalog_snapshot(snapshot_path.parent)
+    )
     return ExecutionInputs(
-        catalog_path=arguments.catalog,
-        catalog_source_uri=arguments.catalog_source_uri,
-        catalog_acquired_at_utc=arguments.catalog_acquired_at,
-        common_epoch_utc=arguments.epoch,
-        code_version=arguments.code_version,
+        catalog_path=snapshot.catalog_path,
+        catalog_source_uri=snapshot.source_uri,
+        catalog_acquired_at_utc=snapshot.acquired_at_utc,
+        common_epoch_utc=arguments.epoch or snapshot.common_epoch_utc,
+        code_version=arguments.code_version or _repository_code_version(),
+        catalog_provenance_paths=snapshot.provenance_paths,
         output_directory=arguments.output,
         workers=arguments.workers,
         resume=arguments.resume,
@@ -877,6 +942,30 @@ def preliminary_main(arguments: Sequence[str] | None = None) -> int:
         _execution_inputs(parsed),
         runs_per_family=parsed.runs_per_family,
         wall_time_budget_s=wall_time_budget_s,
+    )
+
+
+def smoke_main(arguments: Sequence[str] | None = None) -> int:
+    """CLI entry point for one short, real end-to-end realization."""
+    campaign = study.SMOKE_CAMPAIGN
+    parser = _common_parser(campaign)
+    parsed = parser.parse_args(arguments)
+    if parsed.workers != 1:
+        parser.error("--workers must be 1 for the smoke study")
+    wall_time_budget_s = parsed.wall_hours * 3_600.0
+    if not math.isfinite(wall_time_budget_s) or wall_time_budget_s <= 0.0:
+        parser.error("--wall-hours must be positive and finite")
+    families = ((study.SCENARIOS[0], study.NOMINAL_VARIANT),)
+    plan = _plan(campaign, 1, 1, wall_time_budget_s, families)
+    if parsed.dry_run:
+        print(json.dumps(plan, indent=2, sort_keys=True))
+        return 0
+    return _execute_campaign(
+        campaign,
+        _execution_inputs(parsed),
+        runs_per_family=1,
+        wall_time_budget_s=wall_time_budget_s,
+        families=families,
     )
 
 
@@ -952,4 +1041,5 @@ __all__ = [
     "TaskReport",
     "preliminary_main",
     "production_main",
+    "smoke_main",
 ]

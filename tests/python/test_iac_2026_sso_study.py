@@ -7,6 +7,7 @@ import pytest
 
 import odss
 from studies.iac_2026_sso import campaign, study
+from studies.iac_2026_sso import inputs as study_inputs
 
 
 def test_principal_matrix_and_nested_analysis_are_explicit() -> None:
@@ -22,6 +23,7 @@ def test_principal_matrix_and_nested_analysis_are_explicit() -> None:
     assert study.GENERATED_MINIMUM_SIZE_M == 0.01
     assert study.ANALYSIS_SIZE_THRESHOLDS_M == (0.01, 0.05, 0.10)
     assert study.PRELIMINARY_CAMPAIGN.duration_s == 7.0 * 86_400.0
+    assert study.SMOKE_CAMPAIGN.duration_s == 600.0
     assert study.PRODUCTION_CAMPAIGN.duration_s == 365.25 * 86_400.0
     assert study.PRODUCTION_CAMPAIGN.screening_threshold_m == max(study.FLUX_RADII_M)
     assert study.PRODUCTION_CAMPAIGN.maximum_runs_per_family == 64
@@ -104,6 +106,7 @@ def test_catalog_is_filtered_synchronized_and_transformed_to_eme2000(
         catalog_acquired_at_utc="2026-06-20T00:00:00",
         common_epoch_utc="2026-06-20T00:00:00",
         code_version="test-commit",
+        catalog_provenance_paths=(),
         output_directory=tmp_path / "results",
         workers=1,
         resume=False,
@@ -120,6 +123,7 @@ def test_catalog_is_filtered_synchronized_and_transformed_to_eme2000(
         "catalog.json",
         "iac_2026_sso/study.py",
         "iac_2026_sso/campaign.py",
+        "iac_2026_sso/inputs.py",
     }
 
 
@@ -142,6 +146,11 @@ def test_production_count_respects_runtime_and_data_caps() -> None:
 
 
 def test_launch_scripts_expose_dry_run_plans(capsys: pytest.CaptureFixture[str]) -> None:
+    assert campaign.smoke_main(("--dry-run",)) == 0
+    smoke = json.loads(capsys.readouterr().out)
+    assert smoke["expected_result_files"] == 1
+    assert smoke["scenario_names"] == ["500_km_explosion"]
+
     assert campaign.preliminary_main(("--dry-run",)) == 0
     preliminary = json.loads(capsys.readouterr().out)
     assert preliminary["expected_result_files"] == 24
@@ -166,20 +175,52 @@ def test_worker_setup_disables_nested_cascade_threads(
     assert campaign.os.environ["OMP_NUM_THREADS"] == "1"
 
 
-def test_unresolved_external_inputs_fail_before_execution(tmp_path: Path) -> None:
+def test_missing_catalog_fails_before_execution(tmp_path: Path) -> None:
     inputs = campaign.ExecutionInputs(
-        catalog_path=Path(study.XX),
-        catalog_source_uri=study.XX,
-        catalog_acquired_at_utc=study.XX,
-        common_epoch_utc=study.XX,
-        code_version=study.XX,
+        catalog_path=tmp_path / "missing.json",
+        catalog_source_uri="fixture://active-eo",
+        catalog_acquired_at_utc="2026-06-20T00:00:00",
+        common_epoch_utc="2026-06-20T00:00:00",
+        code_version="test-commit",
+        catalog_provenance_paths=(),
         output_directory=tmp_path,
         workers=1,
         resume=False,
     )
 
-    with pytest.raises(ValueError, match="replace XX"):
+    with pytest.raises(FileNotFoundError, match="catalog does not exist"):
         campaign._require_resolved_inputs(inputs)
+
+
+def test_catalog_snapshot_is_frozen_verified_and_reusable(tmp_path: Path) -> None:
+    fixture = Path("tests/fixtures/omm_catalog_a.json").read_bytes()
+    requested: list[str] = []
+
+    def fetch(url: str) -> bytes:
+        requested.append(url)
+        return fixture
+
+    snapshot = study_inputs.acquire_catalog_snapshot(
+        tmp_path / "input",
+        fetcher=fetch,
+        acquired_at_utc="2026-09-21T12:00:00",
+    )
+    loaded = study_inputs.load_catalog_snapshot(snapshot.manifest_path)
+
+    assert loaded == snapshot
+    assert len(requested) == 3
+    assert {path.name for path in snapshot.source_paths} == {
+        "celestrak_weather.json",
+        "celestrak_resource.json",
+        "celestrak_sar.json",
+    }
+    merged = json.loads(snapshot.catalog_path.read_text(encoding="utf-8"))
+    assert len(merged) == 9
+    assert snapshot.common_epoch_utc == "2026-09-21T12:00:00"
+
+    snapshot.source_paths[0].write_text("[]", encoding="utf-8")
+    with pytest.raises(ValueError, match="does not match"):
+        study_inputs.load_catalog_snapshot(snapshot.manifest_path)
 
 
 def test_one_synthetic_realization_builds_a_round_trip_netcdf_result(

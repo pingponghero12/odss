@@ -19,13 +19,17 @@ Cascade uses 120 s collisional steps batched 120 at a time. Each realization is 
 the campaign parallelizes independent realizations across at most 32 worker processes without
 nested backend threading.
 
-## Inputs to replace
+## Frozen inputs
 
-`study.py` contains `XX` placeholders because the final catalog snapshot, its acquisition time, the
-common simulation epoch, and the frozen source commit are not yet available. They can be edited in
-the file or supplied on the command line. The catalog must be one CelesTrak-compatible OMM/JSON
-snapshot formed from the Active Earth Resources, Weather, and Synthetic Aperture Radar groups;
-the script deduplicates and applies the 5% nodal-precession SSO filter.
+The first real run downloads the official CelesTrak `weather`, `resource`, and `sar` groups in
+OMM/JSON format. It archives the three untouched responses, acquisition UTC, URLs, byte counts,
+SHA-256 hashes, and a deterministic merged catalog under `results/iac_2026_sso/input/`. Later runs
+verify and reuse those exact bytes; they never silently refresh the population. The common
+simulation epoch defaults to the recorded acquisition epoch, and the source commit is read from a
+clean Git checkout. There are no executable `XX` placeholders.
+
+OMM/JSON is deliberate: current catalog numbers can exceed the five-digit TLE limit. The merged
+catalog is deduplicated and then filtered using the 5% nodal-precession SSO criterion.
 
 Catalog OMM does not provide physical mass and area. Numerical target propagation therefore uses
 an explicit 1000 kg / 10 m2 proxy. Impact probabilities are separately reported for 1, 5, 10, and
@@ -49,6 +53,14 @@ Run the complete optional-backend validation before scientific execution:
 odss-validate --include-optional-backends --output validation.json
 ```
 
+To verify the entire real pipeline first, run one 10-minute explosion realization. This command
+downloads and freezes the catalog on first use, runs NASA SBM and Cascade, and writes a NetCDF
+result without prompts:
+
+```bash
+python studies/iac_2026_sso/smoke.py
+```
+
 ## Preliminary campaign
 
 First inspect the 24 planned files without requiring external inputs:
@@ -57,19 +69,12 @@ First inspect the 24 planned files without requiring external inputs:
 python studies/iac_2026_sso/preliminary.py --dry-run
 ```
 
-Then run the approximately one-hour, 7-day calibration campaign:
+Then run the approximately one-hour, 7-day calibration campaign. This is non-interactive; on its
+first invocation it acquires and freezes the catalog automatically:
 
 ```bash
-python studies/iac_2026_sso/preliminary.py \
-  --catalog data/active_eo_sso_omm.json \
-  --catalog-source-uri "XX" \
-  --catalog-acquired-at "XX" \
-  --epoch "XX" \
-  --code-version "XX" \
-  --workers 32
+python studies/iac_2026_sso/preliminary.py --workers 32
 ```
-
-Use explicit UTC values such as `2026-09-21T00:00:00`; do not leave `XX` in a scientific run.
 
 ## Production campaign
 
@@ -78,11 +83,6 @@ margin, and chooses a run count within the 48-hour / 32-core budget:
 
 ```bash
 python studies/iac_2026_sso/production.py \
-  --catalog data/active_eo_sso_omm.json \
-  --catalog-source-uri "XX" \
-  --catalog-acquired-at "XX" \
-  --epoch "XX" \
-  --code-version "XX" \
   --pilot-summary results/iac_2026_sso/preliminary/campaign_summary.json \
   --workers 32
 ```
@@ -96,4 +96,7 @@ NetCDF write or Cascade integration would risk partial scientific output.
 Each realization is one compressed NetCDF file. No trajectories are stored. The output directory
 also contains the validation report, resolved campaign manifest, and timing summary needed to
 justify the production sample count. This event-oriented layout is intended to remain compact
-enough for a Zenodo data deposit.
+enough for a Zenodo data deposit. Publish the complete `results/iac_2026_sso/` directory so the
+input snapshot, preliminary calibration, production results, and their manifests remain together.
+The archived raw catalog responses and their hash manifest are part of that directory, so the
+deposit contains the external scientific inputs needed to reproduce the published runs.
