@@ -329,6 +329,7 @@ def test_one_synthetic_realization_builds_a_round_trip_netcdf_result(
     assert summaries["has_maneuver_event_le_500_m"] == 1.0
     assert summaries["censored_minimum_miss_distance_m"] == 500.0
     assert summaries["summed_target_integrated_number_flux_r_10000_m"] > 0.0
+    assert "propagation_wall_duration_s" not in summaries
 
     campaign._require_matching_existing_result(task, prepared)
     changed = campaign.PreparedInputs(

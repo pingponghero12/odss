@@ -399,7 +399,6 @@ def _scientific_result(
 ) -> tuple[odss.RunResult, int, int]:
     fragments = _generate_fragments(task, run, prepared.common_epoch)
     initial_escape = odss.evaluate_escape(fragments.population)
-    propagation_start = time.perf_counter()
     evolution = odss.propagate_and_screen_sso(
         fragments.population,
         prepared.targets,
@@ -413,7 +412,6 @@ def _scientific_result(
         ),
         threshold_m=task.campaign.screening_threshold_m,
     )
-    propagation_wall_duration_s = time.perf_counter() - propagation_start
     decay = odss.evaluate_decay(fragments.population, evolution.final_debris)
 
     flux_by_radius: dict[float, odss.FluxResult] = {}
@@ -470,7 +468,6 @@ def _scientific_result(
             _finite_mean(tuple(item.perigee_altitude_change_m for item in decay.diagnostics)),
             "m",
         ),
-        odss.ScalarRunResult("propagation_wall_duration_s", propagation_wall_duration_s, "s"),
         odss.ScalarRunResult("selected_target_count", float(prepared.selected_target_count), "1"),
         odss.ScalarRunResult(
             "has_screened_conjunction",
