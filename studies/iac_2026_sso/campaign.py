@@ -651,6 +651,15 @@ def _tasks(
     runs_per_family: int,
     families: Sequence[tuple[study.Scenario, study.ModelVariant]],
 ) -> tuple[StudyTask, ...]:
+    def execution_priority(
+        family: tuple[study.Scenario, study.ModelVariant],
+    ) -> tuple[int, int]:
+        scenario, variant = family
+        del variant
+        cost_group = 0 if scenario.breakup_mode == "collision" else 1
+        return cost_group, scenario.scenario_id
+
+    ordered_families = tuple(sorted(families, key=execution_priority))
     return tuple(
         StudyTask(
             campaign=campaign,
@@ -659,7 +668,7 @@ def _tasks(
             run_id=run_id,
             output_path=_result_path(output_directory, scenario, variant, run_id),
         )
-        for scenario, variant in families
+        for scenario, variant in ordered_families
         for run_id in range(runs_per_family)
     )
 
@@ -773,16 +782,36 @@ def _execute_campaign(
     reports: tuple[TaskReport, ...]
     worker_count = min(inputs.workers, len(pending))
     if worker_count == 1:
-        _set_worker_thread_limits()
-        reports = tuple(_run_task(task) for task in pending)
+        context = multiprocessing.get_context("fork")
+        isolated_reports = []
+        for completed_count, task in enumerate(pending, start=1):
+            with ProcessPoolExecutor(
+                max_workers=1,
+                mp_context=context,
+                initializer=_set_worker_thread_limits,
+            ) as executor:
+                isolated_reports.append(executor.submit(_run_task, task).result())
+            print(
+                f"Completed {completed_count}/{len(pending)} new result files",
+                flush=True,
+            )
+        reports = tuple(isolated_reports)
     else:
         context = multiprocessing.get_context("fork")
-        with ProcessPoolExecutor(
-            max_workers=worker_count,
-            mp_context=context,
-            initializer=_set_worker_thread_limits,
-        ) as executor:
-            reports = tuple(executor.map(_run_task, pending, chunksize=1))
+        isolated_reports = []
+        for offset in range(0, len(pending), worker_count):
+            wave = pending[offset : offset + worker_count]
+            with ProcessPoolExecutor(
+                max_workers=len(wave),
+                mp_context=context,
+                initializer=_set_worker_thread_limits,
+            ) as executor:
+                isolated_reports.extend(executor.map(_run_task, wave, chunksize=1))
+            print(
+                f"Completed {len(isolated_reports)}/{len(pending)} new result files",
+                flush=True,
+            )
+        reports = tuple(isolated_reports)
     campaign_wall_duration_s = time.perf_counter() - start
     ordered_reports = tuple(
         sorted(reports, key=lambda item: (item.scenario_id, item.variant, item.run_id))
@@ -914,7 +943,7 @@ def _execution_inputs(arguments: argparse.Namespace) -> ExecutionInputs:
 
 
 def preliminary_main(arguments: Sequence[str] | None = None) -> int:
-    """CLI entry point for the approximately one-hour calibration campaign."""
+    """CLI entry point for the one-hour Monte Carlo pilot campaign."""
     campaign = study.PRELIMINARY_CAMPAIGN
     parser = _common_parser(campaign)
     parser.add_argument(
@@ -992,7 +1021,7 @@ def _runs_from_pilot(
 
 
 def production_main(arguments: Sequence[str] | None = None) -> int:
-    """CLI entry point for the budget-sized one-year production campaign."""
+    """CLI entry point for the budget-sized 12-hour production campaign."""
     campaign = study.PRODUCTION_CAMPAIGN
     parser = _common_parser(campaign)
     parser.add_argument("--runs-per-family", type=int)

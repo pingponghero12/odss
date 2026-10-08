@@ -34,18 +34,27 @@ class FakeDynamics:
 
 class FakeSimulation:
     last_call: tuple[np.ndarray, float, dict[str, object]] | None = None
+    propagation_targets: list[float] = []
+    reset_count = 0
 
     def __init__(self, state: np.ndarray, timestep_s: float, **arguments: object) -> None:
         self.state = np.array(state, copy=True)
         self.time = 0.0
         self.conjunctions: tuple[dict[str, object], ...] = ()
+        FakeSimulation.propagation_targets = []
+        FakeSimulation.reset_count = 0
         FakeSimulation.last_call = (self.state, timestep_s, arguments)
 
     def propagate_until(self, final_time_s: float) -> str:
         duration_s = final_time_s - self.time
         self.state[:, :3] += self.state[:, 3:6] * duration_s
         self.time = final_time_s
+        FakeSimulation.propagation_targets.append(final_time_s)
         return "time_limit"
+
+    def reset_conjunctions(self) -> None:
+        self.conjunctions = ()
+        FakeSimulation.reset_count += 1
 
 
 def fake_cascade() -> SimpleNamespace:
@@ -134,6 +143,21 @@ def test_combined_sso_propagation_screens_only_debris_target_pairs(
                 },
             )
 
+        def propagate_until(self, final_time_s: float) -> str:
+            outcome = super().propagate_until(final_time_s)
+            if not self.conjunctions:
+                self.conjunctions = (
+                    {
+                        "i": 0,
+                        "j": 1,
+                        "time": final_time_s,
+                        "dist": 250.0,
+                        "state_i": (0.0, 0.0, 0.0, 1.0, 0.0, 0.0),
+                        "state_j": (0.0, 0.0, 0.0, -1.0, 0.0, 0.0),
+                    },
+                )
+            return outcome
+
     backend = fake_cascade()
     backend.sim = ScreeningSimulation
     monkeypatch.setattr(sso_dynamics, "_load_cascade", lambda: backend)
@@ -162,6 +186,55 @@ def test_combined_sso_propagation_screens_only_debris_target_pairs(
     assert arguments["conj_thresh"] > 1_000.0
     assert arguments["n_par_ct"] == 120
     assert np.asarray(arguments["pars"]).shape == (3, 1)
+    assert ScreeningSimulation.propagation_targets == pytest.approx((start_time_s + 60.0,))
+    assert ScreeningSimulation.reset_count == 1
+
+
+def test_combined_sso_propagation_flushes_conjunctions_between_batches(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    start_time_s = sso_dynamics.elapsed_time_s(
+        sso_dynamics._j2000_tt,
+        population(count=1).epoch,
+    )
+
+    class BatchedSimulation(FakeSimulation):
+        def propagate_until(self, final_time_s: float) -> str:
+            outcome = super().propagate_until(final_time_s)
+            self.conjunctions = (
+                {
+                    "i": 0,
+                    "j": 1,
+                    "time": final_time_s,
+                    "dist": 100.0,
+                    "state_i": (0.0, 0.0, 0.0, 1.0, 0.0, 0.0),
+                    "state_j": (0.0, 0.0, 0.0, -1.0, 0.0, 0.0),
+                },
+            )
+            return outcome
+
+    backend = fake_cascade()
+    backend.sim = BatchedSimulation
+    monkeypatch.setattr(sso_dynamics, "_load_cascade", lambda: backend)
+
+    result = odss.propagate_and_screen_sso(
+        population(count=1),
+        population(count=2),
+        odss.SsoPropagationSpec(
+            duration_s=25.0,
+            collisional_timestep_s=5.0,
+            force_model=odss.SsoForceModelSpec(),
+            collisional_steps_per_batch=2,
+            conjunction_flush_interval_s=10.0,
+        ),
+        threshold_m=1_000.0,
+    )
+
+    assert tuple(event.tca_s for event in result.conjunctions) == pytest.approx((10.0, 20.0, 25.0))
+    assert BatchedSimulation.propagation_targets == pytest.approx(
+        (start_time_s + 10.0, start_time_s + 20.0, start_time_s + 25.0)
+    )
+    assert BatchedSimulation.reset_count == 3
 
 
 def test_force_model_and_propagation_specs_validate_values() -> None:
@@ -179,6 +252,13 @@ def test_force_model_and_propagation_specs_validate_values() -> None:
             1.0,
             odss.SsoForceModelSpec(),
             collisional_steps_per_batch=0,
+        )
+    with pytest.raises(ValueError, match="conjunction_flush_interval_s"):
+        odss.SsoPropagationSpec(
+            1.0,
+            1.0,
+            odss.SsoForceModelSpec(),
+            conjunction_flush_interval_s=0.0,
         )
 
 

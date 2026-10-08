@@ -6,7 +6,7 @@ from types import SimpleNamespace
 import pytest
 
 import odss
-from studies.iac_2026_sso import campaign, study
+from studies.iac_2026_sso import analyze_preliminary, campaign, study
 from studies.iac_2026_sso import inputs as study_inputs
 
 
@@ -20,43 +20,66 @@ def test_principal_matrix_and_nested_analysis_are_explicit() -> None:
         (800_000.0, "collision"),
     }
     assert tuple(item.scenario_id for item in study.SCENARIOS) == tuple(range(6))
-    assert study.GENERATED_MINIMUM_SIZE_M == 0.01
-    assert study.ANALYSIS_SIZE_THRESHOLDS_M == (0.01, 0.05, 0.10)
-    assert study.PRELIMINARY_CAMPAIGN.duration_s == 7.0 * 86_400.0
+    assert study.GENERATED_MINIMUM_SIZE_M == 0.05
+    assert study.ANALYSIS_SIZE_THRESHOLDS_M == (0.05, 0.10)
+    assert study.PRELIMINARY_CAMPAIGN.duration_s == 3_600.0
+    assert study.PRELIMINARY_CAMPAIGN.default_runs_per_family == 10
     assert study.SMOKE_CAMPAIGN.duration_s == 600.0
-    assert study.PRODUCTION_CAMPAIGN.duration_s == 365.25 * 86_400.0
+    assert study.PRODUCTION_CAMPAIGN.duration_s == 43_200.0
     assert study.PRODUCTION_CAMPAIGN.screening_threshold_m == max(study.FLUX_RADII_M)
-    assert study.PRODUCTION_CAMPAIGN.maximum_runs_per_family == 64
+    assert study.PRODUCTION_CAMPAIGN.maximum_runs_per_family == 50
     assert study.PRODUCTION_CAMPAIGN.wall_time_budget_s == 48.0 * 3_600.0
-    assert study.COLLISIONAL_STEPS_PER_BATCH == 120
+    assert study.COLLISIONAL_STEPS_PER_BATCH == 1
 
 
-def test_model_sensitivities_are_paired_only_at_central_altitude() -> None:
+def test_every_scenario_uses_only_the_nominal_force_model() -> None:
     family_counts = {
         scenario.name: len(study.variants_for(scenario)) for scenario in study.SCENARIOS
     }
 
     assert family_counts["500_km_explosion"] == 1
     assert family_counts["800_km_collision"] == 1
-    assert family_counts["700_km_explosion"] == 4
-    assert family_counts["700_km_collision"] == 4
-    assert study.family_count() == 12
+    assert family_counts["700_km_explosion"] == 1
+    assert family_counts["700_km_collision"] == 1
+    assert study.family_count() == 6
+
+
+def test_preliminary_uncertainty_summaries_use_runs_as_independent_units() -> None:
+    continuous = analyze_preliminary._continuous_summary(
+        (1.0, 2.0, 3.0, 4.0),
+        family="synthetic/nominal",
+        metric="value",
+    )
+    repeated = analyze_preliminary._continuous_summary(
+        (1.0, 2.0, 3.0, 4.0),
+        family="synthetic/nominal",
+        metric="value",
+    )
+    binary = analyze_preliminary._binary_summary((0.0, 1.0, 0.0, 1.0))
+
+    assert continuous == repeated
+    assert continuous["mean"] == 2.5
+    assert continuous["runs"] == 4
+    assert continuous["bootstrap_95_lower"] <= 2.5
+    assert continuous["bootstrap_95_upper"] >= 2.5
+    assert binary["successes"] == 2
+    assert binary["probability"] == 0.5
 
 
 def test_breakup_geometry_is_deterministic_and_variants_share_it() -> None:
     scenario = study.SCENARIOS[2]
     epoch = odss.epoch_from_iso("2026-09-21T00:00:00", "UTC")
     nominal = odss.MonteCarloRun(study.MASTER_SEED, scenario.scenario_id, 7, "nominal", 1)
-    enhanced = odss.MonteCarloRun(
+    comparison = odss.MonteCarloRun(
         study.MASTER_SEED,
         scenario.scenario_id,
         7,
-        "enhanced_forces",
+        "comparison_model",
         1,
     )
 
     first = campaign._rotated_circular_state(scenario, nominal, epoch)
-    second = campaign._rotated_circular_state(scenario, enhanced, epoch)
+    second = campaign._rotated_circular_state(scenario, comparison, epoch)
 
     assert first == second
     assert math.sqrt(sum(value * value for value in first.position_m)) == pytest.approx(
@@ -132,13 +155,13 @@ def test_production_count_respects_runtime_and_data_caps() -> None:
         60.0,
         pilot_duration_s=study.PRELIMINARY_CAMPAIGN.duration_s,
         workers=32,
-        wall_time_budget_s=48.0 * 3_600.0,
+        wall_time_budget_s=study.PRODUCTION_CAMPAIGN.wall_time_budget_s,
     )
     slower = campaign._budgeted_production_runs(
-        3_600.0,
+        200_000.0,
         pilot_duration_s=study.PRELIMINARY_CAMPAIGN.duration_s,
         workers=32,
-        wall_time_budget_s=48.0 * 3_600.0,
+        wall_time_budget_s=study.PRODUCTION_CAMPAIGN.wall_time_budget_s,
     )
 
     assert fast == study.PRODUCTION_CAMPAIGN.maximum_runs_per_family
@@ -153,13 +176,13 @@ def test_launch_scripts_expose_dry_run_plans(capsys: pytest.CaptureFixture[str])
 
     assert campaign.preliminary_main(("--dry-run",)) == 0
     preliminary = json.loads(capsys.readouterr().out)
-    assert preliminary["expected_result_files"] == 24
-    assert preliminary["wall_time_budget_s"] == 3_600.0
+    assert preliminary["expected_result_files"] == 60
+    assert preliminary["wall_time_budget_s"] == 1_200.0
 
-    assert campaign.production_main(("--dry-run",)) == 0
+    assert campaign.production_main(("--dry-run", "--runs-per-family", "50")) == 0
     production = json.loads(capsys.readouterr().out)
-    assert production["duration_s"] == 365.25 * 86_400.0
-    assert production["expected_result_files"] == 192
+    assert production["duration_s"] == 43_200.0
+    assert production["expected_result_files"] == 300
 
 
 def test_worker_setup_disables_nested_cascade_threads(
@@ -173,6 +196,20 @@ def test_worker_setup_disables_nested_cascade_threads(
 
     assert thread_counts == [1]
     assert campaign.os.environ["OMP_NUM_THREADS"] == "1"
+
+
+def test_task_waves_group_similar_runtime_families() -> None:
+    tasks = campaign._tasks(
+        study.PRELIMINARY_CAMPAIGN,
+        Path("results"),
+        10,
+        campaign._study_families(),
+    )
+
+    assert len(tasks) == 60
+    assert all(task.scenario.breakup_mode == "collision" for task in tasks[:10])
+    assert all(task.variant.name == "nominal" for task in tasks[:10])
+    assert {task.run_id for task in tasks[:10]} == set(range(10))
 
 
 def test_missing_catalog_fails_before_execution(tmp_path: Path) -> None:

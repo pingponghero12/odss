@@ -1,4 +1,4 @@
-"""Launch the budget-sized one-year SSO Monte Carlo campaign."""
+"""Launch the budget-sized 12-hour SSO Monte Carlo campaign."""
 
 from __future__ import annotations
 

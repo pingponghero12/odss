@@ -1,23 +1,22 @@
 # SSO fragmentation study
 
 This directory freezes the six principal scenarios: explosions and collisions at 500, 700, and
-800 km. Every breakup is generated once down to 1 cm; 1, 5, and 10 cm populations are analyzed as
-nested subsets. The preliminary campaign covers 7 days for runtime calibration. Production uses
-the measured preliminary cost to select at most 64 realizations per scenario/model family and
-propagates them for 365.25 days.
+800 km. Every breakup is generated once down to 5 cm; 5 and 10 cm populations are analyzed as
+nested subsets. The preliminary campaign uses ten one-hour realizations per family to estimate
+runtime and run-level uncertainty. Production uses the measured preliminary cost to select at most
+20 realizations per scenario family over 12 simulated hours.
 
-The nominal force model is J2 plus drag. Paired enhanced-force and drag-coefficient sensitivities
-reuse the same run IDs at 700 km. The study reports proximity events, number/mass/kinetic-energy
-flux, flux-derived model impact probabilities, decay/removal, escape, and a geometric maneuver-
-demand proxy. It does not claim covariance-based operational collision probability.
+The force model is J2 plus drag. The study reports proximity events, number/mass/kinetic-energy
+flux, flux-derived model impact probabilities, final orbital classification, escape, and a
+geometric maneuver-demand proxy. It does not claim covariance-based operational collision probability.
 Run files keep binary conjunction/maneuver indicators separately from the explicitly named Poisson
 proxy so later Monte Carlo confidence intervals use the realization, rather than the fragment, as
 their statistical unit. With no detected event, the stored minimum distance is censored at the
 screening radius.
 
-Cascade uses 120 s collisional steps batched 120 at a time. Each realization is single-threaded;
-the campaign parallelizes independent realizations across at most 32 worker processes without
-nested backend threading.
+Cascade uses 120 s collisional steps processed one at a time. Each realization is single-threaded;
+the campaign parallelizes independent realizations across worker processes without nested backend
+threading. Workers are restarted between balanced waves so native backend memory is released.
 
 ## Frozen inputs
 
@@ -63,28 +62,28 @@ python studies/iac_2026_sso/smoke.py
 
 ## Preliminary campaign
 
-First inspect the 24 planned files without requiring external inputs:
+First inspect the 60 planned files without requiring external inputs:
 
 ```bash
 python studies/iac_2026_sso/preliminary.py --dry-run
 ```
 
-Then run the approximately one-hour, 7-day calibration campaign. This is non-interactive; on its
+Then run the one-hour, ten-realization-per-family preliminary campaign. This is non-interactive; on its
 first invocation it acquires and freezes the catalog automatically:
 
 ```bash
-python studies/iac_2026_sso/preliminary.py --workers 32
+python studies/iac_2026_sso/preliminary.py --workers 11
 ```
 
 ## Production campaign
 
-Production reads preliminary timing, scales it from 7 to 365.25 days, reserves a 25% runtime
-margin, and chooses a run count within the 48-hour / 32-core budget:
+Production reads preliminary timing, reserves a 25% runtime margin, and chooses a run count within
+the 48-hour compute allocation:
 
 ```bash
 python studies/iac_2026_sso/production.py \
   --pilot-summary results/iac_2026_sso/preliminary/campaign_summary.json \
-  --workers 32
+  --runs-per-family 20 --workers 11 --wall-hours 48
 ```
 
 Use `--wall-hours` if the available allocation changes, or `--runs-per-family` to freeze a reviewed
@@ -100,3 +99,27 @@ enough for a Zenodo data deposit. Publish the complete `results/iac_2026_sso/` d
 input snapshot, preliminary calibration, production results, and their manifests remain together.
 The archived raw catalog responses and their hash manifest are part of that directory, so the
 deposit contains the external scientific inputs needed to reproduce the published runs.
+
+## Manuscript figures and tables
+
+The completed manuscript campaign has 120 files: 20 runs per scenario over 12 h.
+The one-hour pilot is separate and is not pooled into these statistics. Regenerate
+the manuscript assets from a complete campaign with:
+
+```bash
+python -m pip install 'matplotlib>=3.7,<3.11'
+python -m studies.iac_2026_sso.prepare_paper results/iac_2026_sso/production
+```
+
+The generator rejects incomplete or mixed ensembles and records the run-file
+hashes. To use a larger study later, preserve the old outputs, complete a new
+campaign with its own manifest, and pass its directory instead. Review manuscript
+conclusions after changing the data. See `docs/paper_sso/README.md` for paper-build
+instructions, orbital visualization, and local data-preservation notes.
+
+The archive's `removal_fraction` and `reentry_fraction` are disjoint final
+osculating-perigee classes, not physical removal or observed re-entry counts.
+Their sum is the final bound-fragment fraction at or below 200 km. Breakup kicks
+can already create low perigees, and particles are not removed at this boundary.
+The paper therefore labels this quantity **final low-perigee fraction** and does
+not attribute it solely to drag or infer a retention time history.

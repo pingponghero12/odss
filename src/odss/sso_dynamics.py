@@ -69,6 +69,7 @@ class SsoPropagationSpec:
     tolerance: float | None = None
     high_accuracy: bool = False
     collisional_steps_per_batch: int = 1
+    conjunction_flush_interval_s: float = 21_600.0
 
     def __post_init__(self) -> None:
         for value, name in (
@@ -94,6 +95,15 @@ class SsoPropagationSpec:
             or self.collisional_steps_per_batch <= 0
         ):
             raise ValueError("collisional_steps_per_batch must be a positive integer")
+        if not isinstance(self.conjunction_flush_interval_s, (int, float)) or isinstance(
+            self.conjunction_flush_interval_s, bool
+        ):
+            raise TypeError("conjunction_flush_interval_s must be a number")
+        if (
+            not math.isfinite(self.conjunction_flush_interval_s)
+            or self.conjunction_flush_interval_s <= 0.0
+        ):
+            raise ValueError("conjunction_flush_interval_s must be positive and finite")
 
 
 @dataclass(frozen=True, slots=True)
@@ -277,23 +287,29 @@ def propagate_and_screen_sso(
     )
     start_time_s = elapsed_time_s(_j2000_tt, debris.epoch)
     simulation.time = start_time_s
-    outcome = simulation.propagate_until(start_time_s + spec.duration_s)
-    if outcome != cascade.outcome.time_limit:
-        raise RuntimeError(f"Cascade SSO propagation stopped before the requested epoch: {outcome}")
-
     events = []
-    for backend_event in simulation.conjunctions:
-        event = _event_from_cascade(backend_event, debris_count)
-        if event is not None:
-            events.append(
-                ConjunctionEvent(
-                    debris_index=event.debris_index,
-                    target_index=event.target_index,
-                    tca_s=event.tca_s - start_time_s,
-                    miss_distance_m=event.miss_distance_m,
-                    relative_velocity_m_s=event.relative_velocity_m_s,
-                )
+    final_time_s = start_time_s + spec.duration_s
+    batch_duration_s = spec.conjunction_flush_interval_s
+    while simulation.time < final_time_s:
+        batch_end_s = min(final_time_s, simulation.time + batch_duration_s)
+        outcome = simulation.propagate_until(batch_end_s)
+        if outcome != cascade.outcome.time_limit:
+            raise RuntimeError(
+                f"Cascade SSO propagation stopped before the requested epoch: {outcome}"
             )
+        for backend_event in simulation.conjunctions:
+            event = _event_from_cascade(backend_event, debris_count)
+            if event is not None:
+                events.append(
+                    ConjunctionEvent(
+                        debris_index=event.debris_index,
+                        target_index=event.target_index,
+                        tca_s=event.tca_s - start_time_s,
+                        miss_distance_m=event.miss_distance_m,
+                        relative_velocity_m_s=event.relative_velocity_m_s,
+                    )
+                )
+        simulation.reset_conjunctions()
     events.sort(key=lambda event: (event.tca_s, event.debris_index, event.target_index))
     final_state = np.asarray(simulation.state, dtype=np.float64)
     return SsoScreeningResult(
